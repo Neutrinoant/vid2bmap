@@ -1,5 +1,5 @@
 # vid2bmap
-For KSC2023, to be uploaded
+This is code implementation of vid2bmap, presented on Dec 20th, 2023 at Korea Software Congress.
 
 ### Notice
 Pre-trained model and its meta data are given in this repo, but training/test dataset are not.
