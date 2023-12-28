@@ -1,5 +1,5 @@
 # vid2bmap
-This is code implementation of vid2bmap, presented on Dec 20th, 2023 at Korea Software Congress.
+This is code implementation of vid2bmap, presented on Dec 20th, 2023 at Korea Software Congress, as the highly-improved version of previous paper, "Vision-based beatmap extraction in rhythm game toward platform-aware note generation", published at CoG 2021. [Paper Link](https://ieeexplore.ieee.org/abstract/document/9619108)
 
 ### Notice
 Pre-trained model and its meta data are given in this repo, but training/test dataset are not.
