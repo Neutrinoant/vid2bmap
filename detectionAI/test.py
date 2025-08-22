@@ -7,7 +7,6 @@ import shutil
 
 import numpy as np
 import torch
-from torch.autograd import Variable
 import torchvision.datasets as dset
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
@@ -44,7 +43,7 @@ def build_label_json(ckpt_path, outpath=""):
     net.load_state_dict(model_state_dict)
     net = net.to(Config.device)
     
-    net.eval()  # BatchNorm() 레이어를 끔
+    net.eval()  # affects BatchNorm layer
     Y_arr = []
     L_arr = []
     
@@ -52,7 +51,7 @@ def build_label_json(ckpt_path, outpath=""):
         
         for train_data in train_dataloader:
             X_train, L_train = train_data
-            X_train = Variable(X_train).to(Config.device)
+            X_train = X_train.to(Config.device)
             Y_train = net.forward_once(X_train)
             Y_arr.append(Y_train)
             L_arr.append(L_train)
@@ -111,7 +110,6 @@ def build_label_json(ckpt_path, outpath=""):
 
 def test(ckpt_path, label_json=None):
     
-    import json
     def load_json(file):
         with open(file, "rt") as f:
             return json.load(f)
@@ -129,7 +127,7 @@ def test(ckpt_path, label_json=None):
     net.load_state_dict(model_state_dict)
     net = net.to(Config.device)
     
-    net.eval()  # BatchNorm() 레이어를 끔
+    net.eval()  # affects BatchNorm layer
     
     correct = []
     
@@ -189,7 +187,7 @@ def test(ckpt_path, label_json=None):
         X_test_arr = []
         for test_data in test_dataloader:
             X_test, L_test = test_data
-            X_test = Variable(X_test).to(Config.device)
+            X_test = X_test.to(Config.device)
             Y_test = net.forward_once(X_test)
             Y_test_arr.append(Y_test)
             L_test_arr.append(L_test)
@@ -233,7 +231,6 @@ def test_all_checkpoints(ckpt_paths):
     maxid = np.argmax(ratios)
     print(maxid, ratios[maxid])
     
-    import json
     with open("all_correct_ratios.json", "wt") as f:
         json.dump(ratios.tolist(), f)
 

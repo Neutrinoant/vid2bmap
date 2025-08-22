@@ -34,7 +34,7 @@ _C.OUTLIER.THR_MIN_BARS = 5
 _C.FILTER = CN()
 _C.FILTER.BAR = CN()
 _C.FILTER.BAR.THR_MIN_LABEL_FACTOR = 0.3    # G_H 의 몇퍼센트 이상 탐지되어야하는지
-_C.FILTER.BAR.THR_MIN_COUNT = 4             # 탐지되 bar가 G_W 중 몇개 이상이어야 하는지
+_C.FILTER.BAR.THR_MIN_COUNT = 4             # 탐지된 bar가 G_W 중 몇개 이상이어야 하는지
 _C.FILTER.THR_KERNEL = 0.1
 _C.FILTER.THR_MIN_LABELS = 3
 

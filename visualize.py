@@ -377,14 +377,15 @@ def show_labels_one_hot(one_hot_labels, bbox, image, outfile=""):
 
 if __name__ == "__main__":
     
-    image = cv2.imread('result.jpg')
+    start_idx = 945
+    img_cnt = 5
+    imgs = [cv2.imread(f"data/{i:05}.jpg") for i in range(start_idx, start_idx + img_cnt)]
+    
+    bboxfile = str(Path("output/demo_lowh") / "bbox.npy")
+    bbox = np.load(bboxfile)
+    for i in range(img_cnt):
+        imgs[i] = cv2_draw_bboxes(imgs[i], bbox.reshape((-1, 4)), thickness=1)
 
-    bboxes = np.array(
-        [[10,10,50,50],
-         [50,50,100,200],
-         [100,200,500,400]]
-    )
-    image = cv2_draw_bboxes(image, bboxes)
-
-    cv2.imshow("rect", image)
-    cv2.waitKey(0)
+    for img in imgs:
+        cv2.imshow("rect", img)
+        cv2.waitKey(0)

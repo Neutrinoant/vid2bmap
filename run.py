@@ -48,7 +48,7 @@ def bar_fit(frame_paths, outfile, roi, display='splash', thr_minlen=0.20, thr_cl
     roistart = (y, x)
     roiend = (y+h-1, x+w-1)
     
-    # 각 frames에서 bar 노트를 매칭
+    # 각 frame에서 bar 노트를 매칭
     lines = []
     
     dataset = VideoFrameDataset(frame_paths, gray=False)
@@ -63,7 +63,7 @@ def bar_fit(frame_paths, outfile, roi, display='splash', thr_minlen=0.20, thr_cl
 
     lines = np.vstack(lines)
     
-    # 모든 frames에 대해 매칭을 통합, 각 바의 양 끝점 좌표를 겟
+    # 모든 frame에 대해 매칭을 통합, 각 바의 양 끝점 좌표를 겟
     bars = []
     if lines.size > 0:
         
@@ -159,7 +159,7 @@ def save_grid_bbox(gridfile, outfile, n_routes=28, xh_factor=1/2, yh_factor=1/3)
     for i,row in enumerate(grid):
         xl = np.min(row[:,1])
         xr = np.max(row[:,1])
-        unit_x = (xr - xl) / n_routes
+        unit_x = (xr - xl) / n_routes           # (n_routes - 1)가 아닌 n_routes로 나눠서 살짝 작음
         # bbox_h = unit_x // 6           # 노스텔 일반노트 패턴 픽셀수 분석해서 적당히 근사한 결과
         bbox_xh = np.round(unit_x * xh_factor).astype(int)           # 노스텔 일반노트 패턴 픽셀수 분석해서 적당히 근사한 결과
         bbox_yh = np.round(unit_x * yh_factor).astype(int)           # 노스텔 일반노트 패턴 픽셀수 분석해서 적당히 근사한 결과
@@ -173,7 +173,6 @@ def label_bbox_frames_fast(frame_paths, bboxfile, outfile):
     
     import torch
     import torchvision.transforms as transforms
-    from torch.autograd import Variable
     import torchvision.datasets as dset
     from torch.utils.data import DataLoader
     
@@ -196,7 +195,7 @@ def label_bbox_frames_fast(frame_paths, bboxfile, outfile):
     net.load_state_dict(model_state_dict)
     net = net.to(CfgAI.device)
     
-    net.eval()  # BatchNorm() 레이어를 끔
+    net.eval()  # affects BatchNorm layer
     
     # ready for video dataset
     rois_dataset = VideoBBoxDataset(frame_paths, bbox, out_shape=CfgAI.imgsize, should_invert=False, gray=True)
@@ -240,7 +239,7 @@ def label_bbox_frames_fast(frame_paths, bboxfile, outfile):
             # test dataset forward
             B,G,H,W = img_tensors.shape[:4]
             img_tensors = img_tensors.view(-1, *img_tensors.shape[2:])  # (B,G,H,W) -> (B*G,H,W)
-            img_tensors = Variable(img_tensors).to(CfgAI.device)
+            img_tensors = img_tensors.to(CfgAI.device)
             Y_test_arr = net.forward_once(img_tensors)
             
             # choose label
@@ -273,7 +272,7 @@ def graph_partition(labelfile, outfile, thr_dist=1):
     
     labels = np.load(labelfile)   # (F, G_H, G_W)
 
-    F, G_H, G_W = labels.shape[:3]
+    F, G_H, G_W = labels.shape
     
     # L = len(dset.ImageFolder(root=CfgAI.ref_dir).classes)   # 배경 제외
     L = len(load_json(CfgAI.ref_path)["ids"])   # 배경 제외
@@ -289,6 +288,7 @@ def graph_partition(labelfile, outfile, thr_dist=1):
     P = table_fhrl.shape[0]
     
     # 각 행이 [route, time, label, frame] 인 (P,4) 행렬 추출
+    # 시간이 지남에 따른 frame의 증가값과 grid_h의 감소값이 같기 때문에 time = frame + grid_h
     table_rtlf = torch.zeros((P, 4), dtype=table_fhrl.dtype)
     table_rtlf[:,[0,2,3]] = table_fhrl[:,[2,3,0]]
     table_rtlf[:,1] = table_fhrl[:,0] + table_fhrl[:,1]
@@ -308,18 +308,18 @@ def graph_partition(labelfile, outfile, thr_dist=1):
     # 클러스터와 프레임을 연결해 connected graph(s)를 형성,
     # 각 행이 graph 번호인 (P,) 행렬 추출
     map_cluster_frame = []
-    table_cluster_num_frames = torch.zeros((C,), dtype=torch.int64)     # 클러스터당 프레임 개수
+    # table_cluster_num_frames = torch.zeros((C,), dtype=torch.int64)     # 클러스터당 프레임 개수
     for i in range(C):
         mask = (table_c == i)
-        frame_ids = torch.unique(table_rtlf[mask, 3])
+        frame_ids = table_rtlf[mask, 3]
         frames = set(frame_ids.detach().cpu().tolist())
         map_cluster_frame.append(frames)
-        table_cluster_num_frames[i] = len(frames)
+        # table_cluster_num_frames[i] = len(frames)
         
     map_frame_cluster = []
     for i in range(F):
         mask = (table_rtlf[:,3] == i)
-        cluster_ids = torch.unique(table_c[mask])
+        cluster_ids = table_c[mask]
         map_frame_cluster.append(set(cluster_ids.detach().cpu().tolist()))
 
     table_g = torch.zeros((P,), dtype=torch.int64)
@@ -389,8 +389,8 @@ def tag_graph_cluster_outliers(cftgfile, outfile, n_workers):
     table_g = table_cftg[:,3]
     
     P = table_cftg.shape[0]
-    C = table_cftg[:,0].max() + 1
-    G = table_cftg[:,3].max() + 1
+    C = table_c.max() + 1
+    G = table_g.max() + 1
     
     map_cluster_frame = [set() for _ in range(C)]   # 클러스터별 포함된 프레임들
     map_cluster_fo = [list() for _ in range(C)] # 클러스터별 포함된 프레임들과 그 상대적위치
@@ -432,13 +432,14 @@ def tag_graph_cluster_outliers(cftgfile, outfile, n_workers):
         
         ### 1. naive outlier: 클러스터 내 동일 프레임이 2개 이상이면 outlier 목록에 추가
         cfs, counts = table_cftg[mask][:,[0,1]].unique(return_counts=True, dim=0)
-        if (counts >= 2).any():
-            clusters_sub_bad = cfs[counts >= 2][:,0].unique()
-            uniques, counts = torch.hstack([clusters_sub, clusters_sub_bad]).unique(return_counts=True)
-        else:
-            clusters_sub_bad = torch.empty((0,))
+        # if (counts >= 2).any():
+        #     clusters_sub_bad = cfs[counts >= 2][:,0].unique()
+        #     uniques, counts = torch.hstack([clusters_sub, clusters_sub_bad]).unique(return_counts=True)
+        # else:
+        #     clusters_sub_bad = torch.empty((0,))
             
-        all_outlier_clusters += clusters_sub_bad.tolist()
+        # all_outlier_clusters += clusters_sub_bad.tolist()
+        assert not (counts >= 2).any()
         
         if clusters_sub.shape[0] <= 1:
             continue
@@ -450,7 +451,7 @@ def tag_graph_cluster_outliers(cftgfile, outfile, n_workers):
         
         # 프레임별 클러스터를 전부 모으고 pair로 짝지음 (bad cluster 포함)
         for f in frame_loader:
-            clusters_sub_f = set(table_c_sub[table_f_sub == f.flatten()].tolist())
+            clusters_sub_f = table_c_sub[table_f_sub == f].tolist()
             pairs = [[c1,c2] for c1,c2 in combinations(clusters_sub_f, r=2)]
             indices_pair += pairs
         
@@ -459,10 +460,11 @@ def tag_graph_cluster_outliers(cftgfile, outfile, n_workers):
         cluster_pairs_raw = uniques[counts >= 2]
         
         # bad cluster 를 제거
-        mask_c_good = torch.ones(cluster_pairs_raw.shape[0], dtype=torch.bool)
-        for c in clusters_sub_bad:
-            mask_c_good &= ~torch.any(cluster_pairs_raw == c, dim=1)
-        cluster_pairs_good = cluster_pairs_raw[mask_c_good]
+        # mask_c_good = torch.ones(cluster_pairs_raw.shape[0], dtype=torch.bool)
+        # for c in clusters_sub_bad:
+        #     mask_c_good &= ~torch.any(cluster_pairs_raw == c, dim=1)
+        # cluster_pairs_good = cluster_pairs_raw[mask_c_good]
+        cluster_pairs_good = cluster_pairs_raw
         
         if cluster_pairs_good.shape[0] == 0:
             continue
@@ -489,8 +491,9 @@ def tag_graph_cluster_outliers(cftgfile, outfile, n_workers):
             inter_loc2 -= inter_loc2.min()
             
             # 상대순서가 서로 다를 경우 둘다 outlier 후보가 됨
-            if (inter_loc1 != inter_loc2).any():
-                edges.append([i, j])
+            # if (inter_loc1 != inter_loc2).any():
+            #     edges.append([i, j])
+            assert not (inter_loc1 != inter_loc2).any()
         
         if len(edges) == 0:
             continue    # 발견된 outlier 없음
@@ -633,7 +636,7 @@ def graph_partition_with_tag(labelfile, cftgfile, outfile, thr_dist=1):
     
     labels = np.load(labelfile)   # (F, G_H, G_W)
 
-    F, G_H, G_W = labels.shape[:3]
+    F, G_H, G_W = labels.shape
     
     # L = len(dset.ImageFolder(root=CfgAI.ref_dir).classes)   # 배경 제외
     L = len(load_json(CfgAI.ref_path)["ids"])   # 배경 제외
@@ -656,6 +659,7 @@ def graph_partition_with_tag(labelfile, cftgfile, outfile, thr_dist=1):
     table_rtlf_good = table_rtlf[~outlier_mask]
     
     P = table_rtlf_good.shape[0]     # outlier 가 없는 테이블의 크기
+    assert P == table_fhrl.shape[0]
     
     # 각 행이 cluster 번호인 (P,) 행렬 추출 (클러스터는 인덱스 0~(C-1) 까지)
     l_scale = 5
@@ -674,14 +678,14 @@ def graph_partition_with_tag(labelfile, cftgfile, outfile, thr_dist=1):
     map_cluster_frame = []
     for i in range(C):
         mask = (table_c == i)
-        frame_ids = torch.unique(table_rtlf_good[mask, 3])
+        frame_ids = table_rtlf_good[mask, 3]
         frames = set(frame_ids.detach().cpu().tolist())
         map_cluster_frame.append(frames)
         
     map_frame_cluster = []
     for i in range(F):
         mask = (table_rtlf_good[:,3] == i)
-        cluster_ids = torch.unique(table_c[mask])
+        cluster_ids = table_c[mask]
         map_frame_cluster.append(set(cluster_ids.detach().cpu().tolist()))
 
     table_g = torch.zeros((P,), dtype=torch.int64)
@@ -727,8 +731,6 @@ def graph_partition_with_tag(labelfile, cftgfile, outfile, thr_dist=1):
         # table에 subgraph 번호 부여
         table_g[mask] = graph_id
         graph_id += 1
-        
-    G = graph_id
     
     # 그래프 및 주요정보 저장
     table_cftg_good = torch.hstack((table_c[:,None], table_rtlf_good[:,[3,1]], table_g[:,None]))
@@ -751,7 +753,7 @@ def frame_displacement(labelfile, cftgfile, outfile):
     G = table_g.max() + 1
     
     labels = np.load(labelfile)   # (F, G_H, G_W)
-    F, G_H, G_W = labels.shape[:3]
+    F, G_H, G_W = labels.shape
     
     table_cluster_mm = torch.zeros((C,2), dtype=torch.int64)        # 클러스터별 min/max time
     table_cluster_mm_frame = torch.zeros((C,2), dtype=torch.int64)  # 클러스터별 min/max frame
@@ -769,7 +771,8 @@ def frame_displacement(labelfile, cftgfile, outfile):
         max_frame = torch.max(table_f[mask])
         table_cluster_mm_frame[i] = torch.tensor([min_frame, max_frame])
         
-        frames = table_f[mask].unique()
+        frames = table_f[mask]
+        assert frames.shape == frames.unique().shape
         table_cluster_num_frames[i] = frames.shape[0]
         
         table_o[mask] = table_t[mask] - min_time
@@ -822,7 +825,7 @@ def frame_displacement(labelfile, cftgfile, outfile):
         cluster_used = [cid_0]
         
         # 두번째 클러스터부터의 작업
-        irregular_clusters = []
+        # irregular_clusters = []
         for cid in clusters_sub_sorted[1:]:
             indices_c = torch.argwhere(table_c_sub == cid).flatten()
             
@@ -835,9 +838,10 @@ def frame_displacement(labelfile, cftgfile, outfile):
             
             # 세로 클러스터 조건2: 현재 프레임중 이미 처리했던 프레임이 1개이상 존재해야함
             #   나중에 다시 처리 필요
-            if intersection.numel() == 0:
-                irregular_clusters.append(cid)
-                continue
+            # if intersection.numel() == 0:
+            #     irregular_clusters.append(cid)
+            #     continue
+            assert intersection.numel() > 0
             
             # 겹치는 프레임들의 d 값을 구해둠
             dominant_d = table_frame_d[intersection]
@@ -850,6 +854,7 @@ def frame_displacement(labelfile, cftgfile, outfile):
             D_target = dominant_d
             Orig_d = dominant_d.repeat(intersection.shape[0],1)
             New_d = D_target[:,None] - O_target[:,None] + rellocs_sub.repeat(intersection.shape[0],1)
+            assert not (Orig_d - New_d).any()
             losses = torch.mean((Orig_d - New_d)**2, dim=1, dtype=torch.float32)
                 
             # 최소 loss을 만드는 프레임에 대한 d값을 추출
@@ -867,6 +872,7 @@ def frame_displacement(labelfile, cftgfile, outfile):
             cluster_used += [cid]
             
         # 정상 클러스터만 포함 (개수: C'')
+        assert cluster_used == clusters_sub_sorted.tolist()
         cluster_used = torch.tensor(cluster_used)
             
         # 거대한 클러스터 다리 (C'',M) 행렬을 준비 (M: 클러스터를 조건에 맞게 넓은면끼리 이어붙일때 그 폭)
@@ -919,7 +925,7 @@ def labels_to_falling_space_with_displacements(labelfile, dfile, outfile):
     disp_arr = np.load(dfile)
     
     # 프레임 개수 세어서 거대한 one-hot 초기행렬 생성
-    F, G_H, G_W = labels.shape[:3]
+    F, G_H, G_W = labels.shape
     T = (torch.arange(0, F) + disp_arr + G_H).max()
     fs_arr_cal = torch.zeros((T, G_W, L+1), dtype=torch.uint8)  # (T, G_W, L+1)
     
@@ -972,9 +978,9 @@ def filter_BAR(fsfile, labelfile, outfile, thr_min_label_factor=1/3, thr_min_cou
     import torch
     
     labels = np.load(labelfile)     # (F, G_H, G_W)
-    F, G_H, G_W = labels.shape
+    _F, G_H, _G_W = labels.shape
     
-    fs_arr = torch.from_numpy(np.load(fsfile))    # (F+G_H-1, G_W, L+1)
+    fs_arr = torch.from_numpy(np.load(fsfile))    # (T, G_W, L+1), T ~ F+G_H-1
     
     thr_min_label_bar = int(G_H * thr_min_label_factor)    # 한 위치에서 thr이상 탐지되어야 bar패턴으로 간주
     thr_min_count_bar = thr_min_count           # 라인에서 thr이상 bar패턴 감지시 bar노트로 간주
@@ -1122,7 +1128,7 @@ def inspect_cluster(yxcfile, labelfile, fsfile, outfile, thr_kernel=0.1, thr_min
         if len(solutions) == 0:
             # logger.warning(f"irregular cluster (type h1): cid {cid}, (y,x,w)=({YX[0,0].item()},{YX[0,1].item()},{labels.shape[0]})")
             n_labels = labels[:,2:].sum(dim=1)
-            scores = (G_H-(n_labels**2-1)).clamp(min=0).tolist()    # quadratic decrease
+            scores = (G_H-(n_labels**2-1)).tolist()    # quadratic decrease
             score = np.mean(scores)
             solution = [(0,W,score.item())]   # 클러스터 통째로 잡음으로 추가
             solutions.append(solution)
@@ -1139,7 +1145,7 @@ def inspect_cluster(yxcfile, labelfile, fsfile, outfile, thr_kernel=0.1, thr_min
         # 솔루션을 차트에 추가
         y,x = YX[0]
         d = 0
-        for n,w,s in answer:
+        for n,w,_s in answer:
             table_chart.append([y,x+d,w,n])
             d += w
             
@@ -1153,7 +1159,7 @@ def draw_fs_arr_fixed_note_type(fsfile, outdir, barfile="", chartfile="", max_he
     fs_arr = np.load(fsfile)    # (T, G_W, L+1)
     
     T, G_W = fs_arr.shape[:2]
-    L = fs_arr.shape[2] - 1
+    # L = fs_arr.shape[2] - 1
     
     # 라벨의 텍스트 크기 파악
     label_ex = "0000\n0000\n0000"
@@ -1167,12 +1173,9 @@ def draw_fs_arr_fixed_note_type(fsfile, outdir, barfile="", chartfile="", max_he
     # lh = lh // 2
     
     # 텍스트 크기에 따라 거대한 검정 행렬 준비
-    rh = (max_height - T % max_height) % max_height
-    fs_img = np.zeros((lh*(T+rh),lw*28,3), dtype=np.uint8)
+    rh = max_height - T % max_height
+    fs_img = np.zeros((lh*(T+rh),lw*G_W,3), dtype=np.uint8)
     H, W = fs_img.shape[:2]
-    
-    # 그릴 위치를 결정할 mask 행렬 준비
-    fs_mask = np.zeros((T,G_W), dtype=bool)
     
     # bar 노트 처리
     if barfile:
@@ -1195,17 +1198,17 @@ def draw_fs_arr_fixed_note_type(fsfile, outdir, barfile="", chartfile="", max_he
     if chartfile:
         table_chart = np.load(chartfile)
         for y,x,w,n in table_chart:
-            yl = int(H - (y+1) * lh)
-            yr = int(H - (y) * lh)
-            xl = int(x * lw)
-            xr = int((x+w) * lw - 1)
+            yl = H - (y+1) * lh
+            yr = H - (y) * lh
+            xl = x * lw
+            xr = (x+w) * lw - 1     # -1 for adjacent notes
             fs_img[yl:yr,xl:xr] = colors[n]
-        
-    # 나머지 라벨이 존재하는 곳에 표기
-    label_mask = (fs_arr[:,:,1:].sum(axis=2) > 0)
-    fs_mask |= label_mask
     
-    hEx = lambda x: hex(x)[2:].upper() if (x>=0 and x<16) else chr(x-16+ord('G'))
+    # 그릴 위치를 결정할 mask 행렬 (T, G_W)
+    # 나머지 라벨이 존재하는 곳에 표기
+    fs_mask = fs_arr[:,:,2:].sum(axis=2) > 0
+    
+    hEx = lambda x: hex(x)[2:].upper() if x<16 else chr(x-16+ord('G'))
     
     # 라벨을 채워둠
     for i,j in np.argwhere(fs_mask):
@@ -1215,8 +1218,6 @@ def draw_fs_arr_fixed_note_type(fsfile, outdir, barfile="", chartfile="", max_he
         
         # 텍스트
         multi_hot = fs_arr[i,j]
-        if multi_hot[1:].sum() == 0:
-            continue
         pat_hot = multi_hot[2:]
         label_l = ''.join([f"{hEx(l)}" for k,l in enumerate(pat_hot) if k % 3 == 0])
         label_m = ''.join([f"{hEx(l)}" for k,l in enumerate(pat_hot) if k % 3 == 1])
@@ -1225,17 +1226,18 @@ def draw_fs_arr_fixed_note_type(fsfile, outdir, barfile="", chartfile="", max_he
         
         # 그리기
         img = fs_img[y:y+lh, x:x+lw, :]
-        if multi_hot[1] > 0:
-            # bar노트는 외각선 긋기
-            img[[0,lh-1],:,:] = np.array(outline_rgb)
-            img[:,[0,lw-1],:] = np.array(outline_rgb)
+        # if multi_hot[1] > 0:
+        #     # bar노트는 외각선 긋기
+        #     img[[0,lh-1],:,:] = np.array(outline_rgb)
+        #     img[:,[0,lw-1],:] = np.array(outline_rgb)
+        assert multi_hot[1] == 0
         img = vis.add_text_to_image(
             img, 
             label,
             top_left_xy=(0,0),
             font_scale=font_scale,
             font_thickness=font_thickness,
-            font_color_rgb=(0,255,0),
+            font_color_rgb=(0,0,0),
         )
         fs_img[y:y+lh, x:x+lw, :] = img
 
@@ -1244,16 +1246,15 @@ def draw_fs_arr_fixed_note_type(fsfile, outdir, barfile="", chartfile="", max_he
     fs_img_arr = fs_img_bgr.reshape(-1, max_height*lh, W, 3)
     fs_img_arr = np.flip(fs_img_arr, axis=0)
     
-    # 이미지 양옆에 boundary 삽입 (1px 흰색선)
+    # 이미지 양옆에 boundary 삽입 (5px 흰색선)
     s = fs_img_arr.shape
     fs_bd = np.ones((s[0],s[1],5,s[3]), dtype=np.uint8) * 255
     fs_img_arr = np.concatenate([fs_bd, fs_img_arr, fs_bd], axis=2)
     
-    # max_hstack기준으로 이미지 나란히 엮을 준비
+    # max_hstack 기준으로 이미지 나란히 엮을 준비
     N = fs_img_arr.shape[0]
     arange = list(range(0, N, max_hstack))
-    if arange[-1] < N:
-        arange.append(N)
+    arange.append(N)
     
     # 모두 파일로 저장
     os.makedirs(outdir, exist_ok=True)
@@ -1272,7 +1273,6 @@ def filter_tenuto_trill_chart(chartfile, out_tenuto, out_trill):
     #   array shape: (None,4)
     
     import torch
-    from sklearn.cluster import DBSCAN
     
     table_chart = torch.from_numpy(np.load(chartfile))
     
@@ -1298,10 +1298,10 @@ def filter_tenuto_trill_chart(chartfile, out_tenuto, out_trill):
         
         # 시작노트를 찾음 (end 노트보다 아래에서 가장 가까운 노트)
         start_candits = chart_start[(chart_start[:,1]==x) & (chart_start[:,2]==w)]
-        if not (y > start_candits[:,0]).any():
+        start_candits = start_candits[y > start_candits[:,0]]
+        if not start_candits.any():
             logger.warning(f"end note cannot match: {note_end.tolist()}")
             continue
-        start_candits = start_candits[y - start_candits[:,0] > 0]
         note_start = start_candits[start_candits[:,0].argmax()]
         y_s, _, _, n_s = note_start
         
@@ -1325,14 +1325,13 @@ def filter_glissando_simple_chart(chartfile, tenutofile, out_glissando, out_simp
     #   array shape: (None,3)
     
     import torch
-    from sklearn.cluster import DBSCAN
     
     table_chart = torch.from_numpy(np.load(chartfile))
 
     # chart에서 tenuto를 구성하는 start노트를 제거
     chart_tenuto = torch.from_numpy(np.load(tenutofile))
     mask = torch.ones(table_chart.shape[0], dtype=torch.bool)
-    for y1,y2,x1,x2 in chart_tenuto:
+    for y1,_y2,x1,x2 in chart_tenuto:
         note_start = torch.tensor([y1,x1,(x2-x1+1),3], dtype=torch.int64)
         idx_start = torch.argwhere((table_chart == note_start).all(dim=1)).squeeze().item()
         mask[idx_start] = False
@@ -1359,7 +1358,6 @@ def filter_glissando_simple_chart(chartfile, tenutofile, out_glissando, out_simp
 
 
 def run_until_label(videofile, metafile, outdir, cfg, keep=True):
-    import shutil
     vp, mp = videofile, metafile
     
     # 파일경로 세팅
@@ -1374,9 +1372,10 @@ def run_until_label(videofile, metafile, outdir, cfg, keep=True):
     
     # parameters 를 로드
     meta = load_json(mp)
-    start_frame_t, fps = meta["start"]
+    start_frame_t = meta["start"]
+    end_frame_t = meta["end"]
+    fps = meta["fps"]
     start_frame_idx = int(start_frame_t * fps)
-    end_frame_t, fps = meta["end"]
     end_frame_idx = int(end_frame_t * fps)
     roi = meta["roi"]
     display = meta["display"] if "display" in meta else "splash"
@@ -1677,7 +1676,7 @@ def draw_fs_arr(fsfile, outdir, barfile="", tenutofile="", trillfile="", glissan
     fs_arr = np.load(fsfile)    # (F+G_H-1, G_W, L+1)
     
     T, G_W = fs_arr.shape[:2]
-    L = fs_arr.shape[2] - 1
+    # L = fs_arr.shape[2] - 1
     
     # 라벨의 텍스트 크기 파악
     label_ex = "0000\n0000\n0000"
@@ -1691,12 +1690,9 @@ def draw_fs_arr(fsfile, outdir, barfile="", tenutofile="", trillfile="", glissan
     # lh = lh // 2
     
     # 텍스트 크기에 따라 거대한 검정 행렬 준비
-    rh = (max_height - T % max_height) % max_height
-    fs_img = np.zeros((lh*(T+rh),lw*28,3), dtype=np.uint8)
+    rh = max_height - T % max_height
+    fs_img = np.zeros((lh*(T+rh),lw*G_W,3), dtype=np.uint8)
     H, W = fs_img.shape[:2]
-    
-    # 그릴 위치를 결정할 mask 행렬 준비
-    fs_mask = np.zeros((T,G_W), dtype=bool)
     
     # bar 노트 처리
     if barfile:
@@ -1707,16 +1703,18 @@ def draw_fs_arr(fsfile, outdir, barfile="", tenutofile="", trillfile="", glissan
             yl = H - (i+1) * lh
             yr = H - (i) * lh
             fs_img[yl:yr] = np.array([64, 64, 64])   # 회색 마디선
-            
+    
+    padding = 2
+
     # tenuto 노트 처리
     if tenutofile:
         chart_tenuto = np.load(tenutofile)
         for y1,y2,x1,x2 in chart_tenuto:
-            fs_arr[y1:y2+1,x1:x2+1,:] = 0   # trill이 놓인 위치의 라벨을 전부 제거
-            yl = int(H - (y2+1) * lh)
-            yr = int(H - (y1) * lh)
-            xl = int(x1 * lw + 2)
-            xr = int((x2+1) * lw - 2)
+            fs_arr[y1:y2+1,x1:x2+1,:] = 0   # tenuto가 놓인 위치의 라벨을 전부 제거
+            yl = H - (y2+1) * lh
+            yr = H - (y1) * lh
+            xl = x1 * lw + padding
+            xr = (x2+1) * lw - padding
             fs_img[yl:yr,xl:xr] = np.array([0,255,0])     # 초록색 사각형
     
     # trill 노트 처리
@@ -1724,10 +1722,10 @@ def draw_fs_arr(fsfile, outdir, barfile="", tenutofile="", trillfile="", glissan
         chart_trill = np.load(trillfile)
         for y1,y2,x1,x2 in chart_trill:
             fs_arr[y1:y2+1,x1:x2+1,:] = 0   # trill이 놓인 위치의 라벨을 전부 제거
-            yl = int(H - (y2+1) * lh)
-            yr = int(H - (y1) * lh)
-            xl = int(x1 * lw + 2)
-            xr = int((x2+1) * lw - 2)
+            yl = H - (y2+1) * lh
+            yr = H - (y1) * lh
+            xl = x1 * lw + padding
+            xr = (x2+1) * lw - padding
             fs_img[yl:yr,xl:xr] = np.array([255,0,255])     # 보라색 사각형
             
     # glissando 노트 처리
@@ -1735,10 +1733,10 @@ def draw_fs_arr(fsfile, outdir, barfile="", tenutofile="", trillfile="", glissan
         chart_glissando = np.load(glissandofile)
         for y,x1,x2 in chart_glissando:
             fs_arr[y,x1:x2+1,:] = 0   # glissando가 놓인 위치의 라벨을 전부 제거
-            yl = int(H - (y+1) * lh)
-            yr = int(H - (y) * lh)
-            xl = int(x1 * lw + 2)
-            xr = int((x2+1) * lw - 2)
+            yl = H - (y+1) * lh
+            yr = H - (y) * lh
+            xl = x1 * lw + padding
+            xr = (x2+1) * lw - padding
             fs_img[yl:yr,xl:xr] = np.array([255,255,0])     # 노란색 사각형
     
     # simple 노트 처리
@@ -1746,17 +1744,16 @@ def draw_fs_arr(fsfile, outdir, barfile="", tenutofile="", trillfile="", glissan
         chart_simple = np.load(simplefile)
         for y,x1,x2 in chart_simple:
             fs_arr[y,x1:x2+1,:] = 0   # simple가 놓인 위치의 라벨을 전부 제거
-            yl = int(H - (y+1) * lh)
-            yr = int(H - (y) * lh)
-            xl = int(x1 * lw + 2)
-            xr = int((x2+1) * lw - 2)
+            yl = H - (y+1) * lh
+            yr = H - (y) * lh
+            xl = x1 * lw + padding
+            xr = (x2+1) * lw - padding
             fs_img[yl:yr,xl:xr] = np.array([255,255,255])     # 흰색 사각형
         
-    # 나머지 라벨이 존재하는 곳에 표기
-    label_mask = (fs_arr[:,:,1:].sum(axis=2) > 0)
-    fs_mask |= label_mask
+    # 나머지 라벨이 존재하는 곳에 표기 (noise)
+    fs_mask = fs_arr[:,:,2:].sum(axis=2) > 0
     
-    hEx = lambda x: hex(x)[2:].upper() if (x>=0 and x<16) else chr(x-16+ord('G'))
+    hEx = lambda x: hex(x)[2:].upper() if x<16 else chr(x-16+ord('G'))
     
     # 라벨을 채워둠
     for i,j in np.argwhere(fs_mask):
@@ -1766,8 +1763,6 @@ def draw_fs_arr(fsfile, outdir, barfile="", tenutofile="", trillfile="", glissan
         
         # 텍스트
         multi_hot = fs_arr[i,j]
-        if multi_hot[1:].sum() == 0:
-            continue
         pat_hot = multi_hot[2:]
         label_l = ''.join([f"{hEx(l)}" for k,l in enumerate(pat_hot) if k % 3 == 0])
         label_m = ''.join([f"{hEx(l)}" for k,l in enumerate(pat_hot) if k % 3 == 1])
@@ -1776,17 +1771,18 @@ def draw_fs_arr(fsfile, outdir, barfile="", tenutofile="", trillfile="", glissan
         
         # 그리기
         img = fs_img[y:y+lh, x:x+lw, :]
-        if multi_hot[1] > 0:
-            # bar노트는 외각선 긋기
-            img[[0,lh-1],:,:] = np.array(outline_rgb)
-            img[:,[0,lw-1],:] = np.array(outline_rgb)
+        # if multi_hot[1] > 0:
+        #     # bar노트는 외각선 긋기
+        #     img[[0,lh-1],:,:] = np.array(outline_rgb)
+        #     img[:,[0,lw-1],:] = np.array(outline_rgb)
+        assert multi_hot[1] == 0
         img = vis.add_text_to_image(
             img, 
             label,
             top_left_xy=(0,0),
             font_scale=font_scale,
             font_thickness=font_thickness,
-            font_color_rgb=(0,255,0),
+            font_color_rgb=(255,255,255),
         )
         fs_img[y:y+lh, x:x+lw, :] = img
 
@@ -1795,16 +1791,15 @@ def draw_fs_arr(fsfile, outdir, barfile="", tenutofile="", trillfile="", glissan
     fs_img_arr = fs_img_bgr.reshape(-1, max_height*lh, W, 3)
     fs_img_arr = np.flip(fs_img_arr, axis=0)
     
-    # 이미지 양옆에 boundary 삽입 (1px 흰색선)
+    # 이미지 양옆에 boundary 삽입 (5px 흰색선)
     s = fs_img_arr.shape
     fs_bd = np.ones((s[0],s[1],5,s[3]), dtype=np.uint8) * 255
     fs_img_arr = np.concatenate([fs_bd, fs_img_arr, fs_bd], axis=2)
     
-    # max_hstack기준으로 이미지 나란히 엮을 준비
+    # max_hstack 기준으로 이미지 나란히 엮을 준비
     N = fs_img_arr.shape[0]
     arange = list(range(0, N, max_hstack))
-    if arange[-1] < N:
-        arange.append(N)
+    arange.append(N)
     
     # 모두 파일로 저장
     os.makedirs(outdir, exist_ok=True)
@@ -1988,8 +1983,8 @@ def run_demo():
     #   Setting 3 은 특정 step의 undo를 위해 사용 가능합니다.
     
     ### Setting 1. data path
-    videofile = "data/video.mp4"
-    metafile = "data/meta.json"
+    videofile = "data/demo.mp4"
+    metafile = "data/demo.json"
     configfile = "data/config.yaml"     # optional
     outdir = "output"
     

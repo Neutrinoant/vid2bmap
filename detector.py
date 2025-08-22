@@ -19,7 +19,7 @@ def FLD(img, roistart=None, roiend=None, **kwargs):
         by,bx = roiend
     else:
         ay,ax = (0,0)
-        by,bx = img.shape - [1,1]
+        by,bx = (img.shape[0] - 1, img.shape[1] - 1)
 
     cropped = img[ay:by+1, ax:bx+1, :].copy()
     grayimg = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
@@ -62,13 +62,13 @@ def bar_segment_detection_general(img, roistart=None, roiend=None, f_minlen=0.3,
         roistart (_type_, optional): _description_. Defaults to None.
         roiend (_type_, optional): _description_. Defaults to None.
         f_minlen (float, optional): factor of minimum length of bar divided by image size. Defaults to 0.3.
-        thr (int, optional): _description_. Defaults to 100.
+        thr (int, optional): _description_. Defaults to 10.
 
     Returns:
         _type_: _description_
     """
     bars = []
-    min_length = int(round(f_minlen * img.shape[1]))
+    min_length = round(f_minlen * img.shape[1])
 
     # bar segment detection
     lines = FLD(img, roistart, roiend,

@@ -19,7 +19,7 @@ class SiameseNetworkDataset(Dataset):
         self.gray = gray
         self.iternum = iternum  # 전체 데이터를 몇번 사용할것인지
         
-    def __getitem__(self,index):
+    def __getitem__(self):
         img0_tuple = random.choice(self.imageFolderDataset.imgs)
         
         should_get_same_class = random.randint(0,1) 
