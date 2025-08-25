@@ -58,6 +58,39 @@ class SiameseNetworkDataset(Dataset):
         return len(self.imageFolderDataset.imgs) * self.iternum
 
 
+class SiameseNetworkColorDataset(Dataset):
+    def __init__(self,imageFolderDataset,transform=None,should_invert=True, iternum=3):
+        self.imageFolderDataset = imageFolderDataset    
+        self.transform = transform
+        self.should_invert = should_invert
+        self.iternum = iternum  # 전체 데이터를 몇번 사용할것인지
+        
+    def __getitem__(self):
+        img0_tuple = random.choice(self.imageFolderDataset.imgs)
+        
+        should_get_same_class = random.randint(0,1)
+        img_pool = [img for img in self.imageFolderDataset.imgs if img[1] == img0_tuple[1]] \
+                    if should_get_same_class else \
+                    [img for img in self.imageFolderDataset.imgs if img[1] != img0_tuple[1]]
+        img1_tuple = random.choice(img_pool)
+
+        img0 = Image.open(img0_tuple[0])
+        img1 = Image.open(img1_tuple[0])
+        
+        if self.should_invert:
+            img0 = PIL.ImageOps.invert(img0)
+            img1 = PIL.ImageOps.invert(img1)
+
+        if self.transform is not None:
+            img0 = self.transform(img0)
+            img1 = self.transform(img1)
+        
+        return img0, img1 , torch.from_numpy(np.array([int(img1_tuple[1]!=img0_tuple[1])],dtype=np.float32))
+    
+    def __len__(self):
+        return len(self.imageFolderDataset.imgs) * self.iternum
+
+
 class LabeledDataset(Dataset):
     
     def __init__(self,imageFolderDataset, transform=None,should_invert=True, gray=True):

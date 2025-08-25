@@ -3,8 +3,9 @@
 import torch.nn as nn
 
 class SiameseNetworkColor(nn.Module):
-    def __init__(self):
+    def __init__(self, imgsize):
         super(SiameseNetworkColor, self).__init__()
+        self.imgsize = imgsize  # (h,w)
         self.cnn1 = nn.Sequential(
             nn.ReflectionPad2d(1),
             nn.Conv2d(1*3, 4*3, kernel_size=3, groups=3),
@@ -23,7 +24,7 @@ class SiameseNetworkColor(nn.Module):
         )
 
         self.fc1 = nn.Sequential(
-            nn.Linear(8*3*100*100, 256),
+            nn.Linear(8*3*self.imgsize[0]*self.imgsize[1], 256),
             nn.ReLU(inplace=True),
 
             nn.Linear(256, 256),
