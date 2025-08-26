@@ -4,7 +4,7 @@ This is an official implementation of vid2bmap, presented on Dec 20th, 2023 at K
 ### Notice
 Pre-trained model and its meta data are given in this repo, but training/test dataset are not.
 
-- pretrained model: `detectionAI/checkpoints/best.ckpt`
+- pretrained model: `detectionAI/checkpoints/color_best.ckpt`
 - meta data: `detectionAI/data/label.json`
 
 ### Run Demo

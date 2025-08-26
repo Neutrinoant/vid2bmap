@@ -103,7 +103,7 @@ def train():
         }, os.path.join(Config.checkpoint_dir, f"last.ckpt"))
     
     plt.plot(counter,loss_history)
-    plt.savefig("loss.jpg")
+    plt.savefig("detectionAI/loss.jpg")
 
 def train_color():
     Config.seed_everything(Config.seed)
@@ -131,7 +131,7 @@ def train_color():
     optimizer = optim.Adam(net.parameters(), lr=0.0005)
 
     counter = []
-    loss_history = [] 
+    loss_history = []
     iteration_number = 0
 
     for epoch in range(0, Config.train_number_epochs):
@@ -141,7 +141,6 @@ def train_color():
             img0, img1, label = img0.to(Config.device), img1.to(Config.device), label.to(Config.device)
 
             output1, output2 = net(img0, img1)
-            logger.debug(f"{output1.shape}, {output2.shape}, {label.shape}")
             loss_contrastive = criterion(output1, output2, label)
 
             optimizer.zero_grad()
@@ -174,8 +173,9 @@ def train_color():
         }, os.path.join(Config.checkpoint_dir, f"last.ckpt"))
     
     plt.plot(counter,loss_history)
-    plt.savefig("loss.jpg")
+    plt.savefig("detectionAI/loss.jpg")
 
 
 if __name__ == "__main__":
+    # train()
     train_color()

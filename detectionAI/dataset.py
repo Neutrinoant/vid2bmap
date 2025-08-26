@@ -19,7 +19,7 @@ class SiameseNetworkDataset(Dataset):
         self.gray = gray
         self.iternum = iternum  # 전체 데이터를 몇번 사용할것인지
         
-    def __getitem__(self):
+    def __getitem__(self, index):
         img0_tuple = random.choice(self.imageFolderDataset.imgs)
         
         should_get_same_class = random.randint(0,1) 
@@ -64,14 +64,20 @@ class SiameseNetworkColorDataset(Dataset):
         self.transform = transform
         self.should_invert = should_invert
         self.iternum = iternum  # 전체 데이터를 몇번 사용할것인지
-        
-    def __getitem__(self):
+
+        self.img_list = [[] for _ in range(len(self.imageFolderDataset.classes))]
+        for img in self.imageFolderDataset.imgs:
+            self.img_list[img[1]].append(img)
+        self.img_list_comp = []
+        for i in range(len(self.img_list)):
+            self.img_list_comp.append([img for j, img in enumerate(self.img_list) if j != i])
+            self.img_list_comp[i] = [img for sublist in self.img_list_comp[i] for img in sublist]
+
+    def __getitem__(self, index):
         img0_tuple = random.choice(self.imageFolderDataset.imgs)
         
         should_get_same_class = random.randint(0,1)
-        img_pool = [img for img in self.imageFolderDataset.imgs if img[1] == img0_tuple[1]] \
-                    if should_get_same_class else \
-                    [img for img in self.imageFolderDataset.imgs if img[1] != img0_tuple[1]]
+        img_pool = self.img_list[img0_tuple[1]] if should_get_same_class else self.img_list_comp[img0_tuple[1]]
         img1_tuple = random.choice(img_pool)
 
         img0 = Image.open(img0_tuple[0])

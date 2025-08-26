@@ -11,10 +11,10 @@ class Config():
     ###
     detection_root_path = str(Path(__file__).parent)
     checkpoint_dir = os.path.join(detection_root_path, "checkpoints")
-    checkpoint_path = os.path.join(detection_root_path, "checkpoints/best.ckpt")
+    checkpoint_path = os.path.join(detection_root_path, "checkpoints/color_best.ckpt")
     training_dir = os.path.join(detection_root_path, "data/train/")
     testing_dir = os.path.join(detection_root_path, "data/test")
-    ref_path = os.path.join(detection_root_path, "data/label.json")
+    ref_path = os.path.join(detection_root_path, "data/label_color.json")
     
     seed = 100
 
