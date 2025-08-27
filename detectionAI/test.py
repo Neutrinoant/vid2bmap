@@ -191,7 +191,7 @@ def build_label_json_color(ckpt_path, outpath=""):
             "centroids_y": centroids_y.tolist()
         }
         with open(outpath, "wt") as f:
-            json.dump(jsondata, f)
+            json.dump(jsondata, f, indent=4)
     
     dataset = LabeledNumpyDataset(centroids, labels)
     return dataset

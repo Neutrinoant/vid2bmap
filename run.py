@@ -176,7 +176,7 @@ def label_bbox_frames_fast(frame_paths, bboxfile, outfile):
     import torchvision.datasets as dset
     from torch.utils.data import DataLoader
     
-    from detectionAI.model import SiameseNetwork
+    from detectionAI.model import SiameseNetworkColor
     from detectionAI.dataset import VideoBBoxDataset, LabeledDataset
     
     from detectionAI.config import Config as CfgAI
@@ -191,14 +191,14 @@ def label_bbox_frames_fast(frame_paths, bboxfile, outfile):
     checkpoint = torch.load(CfgAI.checkpoint_path, map_location=CfgAI.device)
     model_state_dict = checkpoint["model_state_dict"]
     
-    net = SiameseNetwork(imgsize=CfgAI.imgsize)
+    net = SiameseNetworkColor(imgsize=CfgAI.imgsize)
     net.load_state_dict(model_state_dict)
     net = net.to(CfgAI.device)
     
     net.eval()  # affects BatchNorm layer
     
     # ready for video dataset
-    rois_dataset = VideoBBoxDataset(frame_paths, bbox, out_shape=CfgAI.imgsize, should_invert=False, gray=True)
+    rois_dataset = VideoBBoxDataset(frame_paths, bbox, out_shape=CfgAI.imgsize, should_invert=False, gray=False)
     rois_dataloader = DataLoader(rois_dataset, num_workers=CfgAI.num_workers, batch_size=1, shuffle=False)
     
     # ready for labeling dataset
@@ -231,21 +231,19 @@ def label_bbox_frames_fast(frame_paths, bboxfile, outfile):
         increase_idx = torch.argsort(L_ref_arr)
         Y_label = Y_ref_arr[increase_idx]   # shape: (L,10), L: number of labels
         
-        assert Y_label.shape == Y_ref_arr.shape, "label_bbox_frames_fast: all labels are unique"     # 모든 label은 1개씩만 존재해야함
-        
         label_arr = []
         
         for img_tensors in tqdm(rois_dataloader):
             # test dataset forward
-            B,G,H,W = img_tensors.shape[:4]
-            img_tensors = img_tensors.view(-1, *img_tensors.shape[2:])  # (B,G,H,W) -> (B*G,H,W)
+            B = img_tensors.shape[0]
+            img_tensors = img_tensors.view(-1, *img_tensors.shape[2:])  # (B,G,C,H,W) -> (B*G,C,H,W)
             img_tensors = img_tensors.to(CfgAI.device)
             Y_test_arr = net.forward_once(img_tensors)
             
             # choose label
             Y_test_arr = Y_test_arr.view(-1,1,*Y_test_arr.shape[1:])     # shape: (B*G,1,10)
             D = torch.sum((Y_test_arr - Y_label)**2, dim=2)**0.5        # shape: (B*G,L)
-                
+            
             Id_min = torch.argmin(D, dim=1)
             D_min = D[np.arange(D.shape[0]),Id_min]
             Id_filtered = torch.where(D_min < CfgAI.thr_max_dist, Id_min+1, 0)    # add 1 to keep 0 as 'default' class
@@ -432,14 +430,13 @@ def tag_graph_cluster_outliers(cftgfile, outfile, n_workers):
         
         ### 1. naive outlier: 클러스터 내 동일 프레임이 2개 이상이면 outlier 목록에 추가
         cfs, counts = table_cftg[mask][:,[0,1]].unique(return_counts=True, dim=0)
-        # if (counts >= 2).any():
-        #     clusters_sub_bad = cfs[counts >= 2][:,0].unique()
-        #     uniques, counts = torch.hstack([clusters_sub, clusters_sub_bad]).unique(return_counts=True)
-        # else:
-        #     clusters_sub_bad = torch.empty((0,))
+        if (counts >= 2).any():
+            clusters_sub_bad = cfs[counts >= 2][:,0].unique()
+            uniques, counts = torch.hstack([clusters_sub, clusters_sub_bad]).unique(return_counts=True)
+        else:
+            clusters_sub_bad = torch.empty((0,))
             
-        # all_outlier_clusters += clusters_sub_bad.tolist()
-        assert not (counts >= 2).any()
+        all_outlier_clusters += clusters_sub_bad.tolist()
         
         if clusters_sub.shape[0] <= 1:
             continue
@@ -451,7 +448,7 @@ def tag_graph_cluster_outliers(cftgfile, outfile, n_workers):
         
         # 프레임별 클러스터를 전부 모으고 pair로 짝지음 (bad cluster 포함)
         for f in frame_loader:
-            clusters_sub_f = table_c_sub[table_f_sub == f].tolist()
+            clusters_sub_f = set(table_c_sub[table_f_sub == f].tolist())
             pairs = [[c1,c2] for c1,c2 in combinations(clusters_sub_f, r=2)]
             indices_pair += pairs
         
@@ -460,11 +457,10 @@ def tag_graph_cluster_outliers(cftgfile, outfile, n_workers):
         cluster_pairs_raw = uniques[counts >= 2]
         
         # bad cluster 를 제거
-        # mask_c_good = torch.ones(cluster_pairs_raw.shape[0], dtype=torch.bool)
-        # for c in clusters_sub_bad:
-        #     mask_c_good &= ~torch.any(cluster_pairs_raw == c, dim=1)
-        # cluster_pairs_good = cluster_pairs_raw[mask_c_good]
-        cluster_pairs_good = cluster_pairs_raw
+        mask_c_good = torch.ones(cluster_pairs_raw.shape[0], dtype=torch.bool)
+        for c in clusters_sub_bad:
+            mask_c_good &= ~torch.any(cluster_pairs_raw == c, dim=1)
+        cluster_pairs_good = cluster_pairs_raw[mask_c_good]
         
         if cluster_pairs_good.shape[0] == 0:
             continue
@@ -491,9 +487,8 @@ def tag_graph_cluster_outliers(cftgfile, outfile, n_workers):
             inter_loc2 -= inter_loc2.min()
             
             # 상대순서가 서로 다를 경우 둘다 outlier 후보가 됨
-            # if (inter_loc1 != inter_loc2).any():
-            #     edges.append([i, j])
-            assert not (inter_loc1 != inter_loc2).any()
+            if (inter_loc1 != inter_loc2).any():
+                edges.append([i, j])
         
         if len(edges) == 0:
             continue    # 발견된 outlier 없음
@@ -659,7 +654,6 @@ def graph_partition_with_tag(labelfile, cftgfile, outfile, thr_dist=1):
     table_rtlf_good = table_rtlf[~outlier_mask]
     
     P = table_rtlf_good.shape[0]     # outlier 가 없는 테이블의 크기
-    assert P == table_fhrl.shape[0]
     
     # 각 행이 cluster 번호인 (P,) 행렬 추출 (클러스터는 인덱스 0~(C-1) 까지)
     l_scale = 5
@@ -854,7 +848,6 @@ def frame_displacement(labelfile, cftgfile, outfile):
             D_target = dominant_d
             Orig_d = dominant_d.repeat(intersection.shape[0],1)
             New_d = D_target[:,None] - O_target[:,None] + rellocs_sub.repeat(intersection.shape[0],1)
-            assert not (Orig_d - New_d).any()
             losses = torch.mean((Orig_d - New_d)**2, dim=1, dtype=torch.float32)
                 
             # 최소 loss을 만드는 프레임에 대한 d값을 추출
@@ -1027,7 +1020,8 @@ def inspect_cluster(yxcfile, labelfile, fsfile, outfile, thr_kernel=0.1, thr_min
     # 솔루션에서 각 노트를 (y,x,w,note_type) 로 변환, 모아서 table_chart를 생성
     #
     # 백트래킹 노드 템플릿: [(note_type, width, score), ...]
-    #   note_type - 0(noise), 1(end), 2(glissando), 3(simple), 4(trill)
+    #   note_type - 0(noise), 1(end-L), 2(glissando-L), 3(simple-L), 4(trill-L)
+    #       5(end-R), 6(glissando-R), 7(simple-R), 8(trill-R)
     #   width - 0(init), 1~28(노트의 폭)
     #   score - 일치하는 정도 (최대 G_H)
     from typing import List, Tuple
@@ -1036,6 +1030,7 @@ def inspect_cluster(yxcfile, labelfile, fsfile, outfile, thr_kernel=0.1, thr_min
     F, G_H, G_W = torch.from_numpy(np.load(labelfile)).shape
     
     fs_arr = torch.from_numpy(np.load(fsfile))
+    L = fs_arr.shape[2] - 1
     
     table_yxc = torch.from_numpy(np.load(yxcfile))
     table_yx = table_yxc[:,[0,1]]
@@ -1044,32 +1039,44 @@ def inspect_cluster(yxcfile, labelfile, fsfile, outfile, thr_kernel=0.1, thr_min
     
     # kernel 함수 정의 (n: note_type, w: width)
     def kernel(n, w):
-        assert n in [1,2,3,4] and w in range(2,27+1)
+        assert n in [1,2,3,4,5,6,7,8] and w in range(2,27+1)
         
-        # label 순서에 따른 시작위치. 
-        #   0(배경),1(bar),2~4(end),5~7(glissando),8~10(simple),11~14(trill)
+        # label 순서에 따른 시작위치.
+        # 0(background), 1(bar), 2/4/6(end-L), 3/5/7(end-R), 8/10/12(glissando-L), 9/11/13(glissando-R),
+        # 14/16/18(simple-L), 15/17/19(simple-R), 20/22/24(trill-L), 21/23/25(trill-R)
         if n in [1,2,3]:
-            s = 2+3*(n-1)
-        else:   # n == 4
-            s = 2+3*2   # trill은 기본 simple로 해야함
+            s = 2+6*(n-1)
+        elif n == 4:
+            s = 2+6*2   # trill은 기본 simple로 해야함
+        elif n in [5,6,7]:
+            s = 3+6*(n-5)
+        else:   # n == 8
+            s = 3+6*2   # trill은 기본 simple로 해야함
         
         # kernel의 정의
-        ker = torch.zeros((14,w), dtype=torch.int64)
-        ker[s,0] = ker[s+2,-1] = 1
+        ker = torch.zeros((L+1,w), dtype=torch.int64)
+        ker[s,0] = ker[s+4,-1] = 1
         for i in range(1,w-1):
-            ker[s+1,i] = 1
+            ker[s+2,i] = 1
         if n == 4:
             if w % 2 == 0:
-                ker[s+1,[w//2-1,w//2]] = 0
-                ker[2+3*3,w//2-1] = 1
-                ker[2+3*3+2,w//2] = 1
+                ker[s+2,[w//2-1,w//2]] = 0
+                ker[2+6*3,w//2-1] = 1
+                ker[2+6*3+4,w//2] = 1
             else:
-                ker[s+1,w//2] = 0
-                ker[2+3*3+1,w//2] = 1
+                ker[s+2,w//2] = 0
+                ker[2+6*3+2,w//2] = 1
+        elif n == 8:
+            if w % 2 == 0:
+                ker[s+2,[w//2-1,w//2]] = 0
+                ker[3+6*3,w//2-1] = 1
+                ker[3+6*3+4,w//2] = 1
+            else:
+                ker[s+2,w//2] = 0
+                ker[3+6*3+2,w//2] = 1
         ker = ker / w
-            
+        
         # kernel값의 통과한도 결정 (maximum G_H)
-        # thr = torch.tensor([G_H*0.3])
         thr = torch.tensor([G_H*thr_kernel])
         
         return ker, thr
@@ -1080,7 +1087,7 @@ def inspect_cluster(yxcfile, labelfile, fsfile, outfile, thr_kernel=0.1, thr_min
         mask = (table_c == cid)
         indices_inc_x = torch.argsort(table_yx[mask,1])
         YX = table_yx[mask][indices_inc_x]
-        labels = fs_arr[YX[:,0], YX[:,1]]   # x축 오름차순 정렬된 클러스터 내 라벨. shape: (W, 14)
+        labels = fs_arr[YX[:,0], YX[:,1]]   # x축 오름차순 정렬된 클러스터 내 라벨. shape: (W, L+1)
         W = labels.shape[0]
         
         stack: List[List[Tuple[int,int]]] = [[(0,0,0)]]     # initial node
@@ -1109,12 +1116,11 @@ def inspect_cluster(yxcfile, labelfile, fsfile, outfile, thr_kernel=0.1, thr_min
             
             # 노트인지 파악 (타입 4종, 최대폭=남은라벨수)
             for w in range(2,lr+1):
-                labels_w = labels[lpos:lpos+w].T    # shape: (14,w)
+                labels_w = labels[lpos:lpos+w].T    # shape: (L+1,w)
                 
-                for node_type in [1,2,3,4]:
-                    if node_type == 4 and w == 2:
+                for node_type in [1,2,3,4,5,6,7,8]:
+                    if (node_type == 4 or node_type == 8) and w == 2:
                         continue
-                    # end, glissando, simple, trill 순으로 조사
                     f_ker, thr_score = kernel(node_type,w)
                     score = torch.sum(f_ker * labels_w)
                     if score >= thr_score:
@@ -1190,10 +1196,14 @@ def draw_fs_arr_fixed_note_type(fsfile, outdir, barfile="", chartfile="", max_he
     # chart의 노트타입별 처리
     colors = np.array(
         [[128,128,128],     # noise
-         [0,255,0],         # end
-         [255,255,0],       # glissando
-         [255,255,255],     # simple
-         [255,0,255]]       # trill
+         [0,63,255],        # end-L
+         [255,255,191],      # glissando-L
+         [191,191,255],     # simple-L
+         [127,0,255],       # trill-L
+         [255,63,0],        # end-R
+         [255,223,0],       # glissando-R
+         [255,191,191],     # simple-R
+         [255,0,127]]       # trill-R
     )
     if chartfile:
         table_chart = np.load(chartfile)
@@ -1206,40 +1216,41 @@ def draw_fs_arr_fixed_note_type(fsfile, outdir, barfile="", chartfile="", max_he
     
     # 그릴 위치를 결정할 mask 행렬 (T, G_W)
     # 나머지 라벨이 존재하는 곳에 표기
-    fs_mask = fs_arr[:,:,2:].sum(axis=2) > 0
+    # fs_mask = fs_arr[:,:,2:].sum(axis=2) > 0
     
-    hEx = lambda x: hex(x)[2:].upper() if x<16 else chr(x-16+ord('G'))
+    # hEx = lambda x: hex(x)[2:].upper() if x<16 else chr(x-16+ord('G'))
     
-    # 라벨을 채워둠
-    for i,j in np.argwhere(fs_mask):
-        # 텍스트 시작위치
-        x = j * lw
-        y = H - (i+1) * lh
+    # # 라벨을 채워둠
+    # for i,j in np.argwhere(fs_mask):
+    #     # 텍스트 시작위치
+    #     x = j * lw
+    #     y = H - (i+1) * lh
         
-        # 텍스트
-        multi_hot = fs_arr[i,j]
-        pat_hot = multi_hot[2:]
-        label_l = ''.join([f"{hEx(l)}" for k,l in enumerate(pat_hot) if k % 3 == 0])
-        label_m = ''.join([f"{hEx(l)}" for k,l in enumerate(pat_hot) if k % 3 == 1])
-        label_r = ''.join([f"{hEx(l)}" for k,l in enumerate(pat_hot) if k % 3 == 2])
-        label = '\n'.join([label_l, label_m, label_r])
+    #     # 텍스트
+    #     multi_hot = fs_arr[i,j]
+    #     # pat_hot = multi_hot[2:14]
+    #     pat_hot = multi_hot[14:]
+    #     label_l = ''.join([f"{hEx(l)}" for k,l in enumerate(pat_hot) if k % 3 == 0])
+    #     label_m = ''.join([f"{hEx(l)}" for k,l in enumerate(pat_hot) if k % 3 == 1])
+    #     label_r = ''.join([f"{hEx(l)}" for k,l in enumerate(pat_hot) if k % 3 == 2])
+    #     label = '\n'.join([label_l, label_m, label_r])
         
-        # 그리기
-        img = fs_img[y:y+lh, x:x+lw, :]
-        # if multi_hot[1] > 0:
-        #     # bar노트는 외각선 긋기
-        #     img[[0,lh-1],:,:] = np.array(outline_rgb)
-        #     img[:,[0,lw-1],:] = np.array(outline_rgb)
-        assert multi_hot[1] == 0
-        img = vis.add_text_to_image(
-            img, 
-            label,
-            top_left_xy=(0,0),
-            font_scale=font_scale,
-            font_thickness=font_thickness,
-            font_color_rgb=(0,0,0),
-        )
-        fs_img[y:y+lh, x:x+lw, :] = img
+    #     # 그리기
+    #     img = fs_img[y:y+lh, x:x+lw, :]
+    #     # if multi_hot[1] > 0:
+    #     #     # bar노트는 외각선 긋기
+    #     #     img[[0,lh-1],:,:] = np.array(outline_rgb)
+    #     #     img[:,[0,lw-1],:] = np.array(outline_rgb)
+    #     assert multi_hot[1] == 0
+    #     img = vis.add_text_to_image(
+    #         img, 
+    #         label,
+    #         top_left_xy=(0,0),
+    #         font_scale=font_scale,
+    #         font_thickness=font_thickness,
+    #         font_color_rgb=(0,0,0),
+    #     )
+    #     fs_img[y:y+lh, x:x+lw, :] = img
 
     # max_height기준으로 이미지 자르기
     fs_img_bgr = fs_img[:,:,[2,1,0]]
@@ -1267,34 +1278,37 @@ def draw_fs_arr_fixed_note_type(fsfile, outdir, barfile="", chartfile="", max_he
 def filter_tenuto_trill_chart(chartfile, out_tenuto, out_trill):
     # table_chart에서 테누토,트릴을 추출
     # 두 노트의 차트 구조:
-    #   array element: [y1,y2,x1,x2],
+    #   array element: [y1,y2,x1,x2,lr],
     #       y1,y2: 시간축 시작과 끝, 정수값 (0, T-1)
     #       x1,x2: 건반축 시작과 끝, 정수값 (0~27)
-    #   array shape: (None,4)
+    #       lr: 왼쪽/오른쪽 구분 (0: 왼쪽, 1: 오른쪽)
+    #   array shape: (None,5)
     
     import torch
     
     table_chart = torch.from_numpy(np.load(chartfile))
     
     # end노트를 다 모아둠
-    chart_end = table_chart[table_chart[:,3] == 1]
+    chart_end = table_chart[torch.logical_or(table_chart[:,3] == 1, table_chart[:,3] == 5)]
     
     # end노트가 없으면 종료
     if chart_end.shape[0] == 0:
-        np.save(out_tenuto, np.empty((0,4), dtype=np.int64))
-        np.save(out_trill, np.empty((0,4), dtype=np.int64))
+        np.save(out_tenuto, np.empty((0,5), dtype=np.int64))
+        np.save(out_trill, np.empty((0,5), dtype=np.int64))
         return
     
     # 시작노트가 될 후보 라벨을 전부 모아둔 행렬 준비 (simple 또는 trill)
-    chart_start = table_chart[(table_chart[:,3] == 3) | (table_chart[:,3] == 4)]
-    
-    # 테누토, 트릴 차트 준비, 둘다 (y1,y2,x1,x2) 형식
+    chart_start_L = table_chart[torch.logical_or(table_chart[:,3] == 3, table_chart[:,3] == 4)]
+    chart_start_R = table_chart[torch.logical_or(table_chart[:,3] == 7, table_chart[:,3] == 8)]
+
+    # 테누토, 트릴 차트 준비, 둘다 (y1,y2,x1,x2,lr) 형식
     chart_tenuto = []
     chart_trill = []
     
     # 분리된 클러스터 각각에 대해
     for note_end in chart_end:
-        y,x,w,_ = note_end
+        y,x,w,n = note_end
+        chart_start = chart_start_L if n == 1 else chart_start_R
         
         # 시작노트를 찾음 (end 노트보다 아래에서 가장 가까운 노트)
         start_candits = chart_start[(chart_start[:,1]==x) & (chart_start[:,2]==w)]
@@ -1304,12 +1318,13 @@ def filter_tenuto_trill_chart(chartfile, out_tenuto, out_trill):
             continue
         note_start = start_candits[start_candits[:,0].argmax()]
         y_s, _, _, n_s = note_start
-        
+
+        lr = 0 if n_s in [3,4] else 1
         # 시작노트가 테누토인지 트릴인지 구분
-        if n_s == 3:
-            chart_tenuto.append([y_s,y,x,x+w-1])
-        elif n_s == 4:
-            chart_trill.append([y_s,y,x,x+w-1])
+        if n_s == 3 or n_s == 7:
+            chart_tenuto.append([y_s,y,x,x+w-1,lr])
+        elif n_s == 4 or n_s == 8:
+            chart_trill.append([y_s,y,x,x+w-1,lr])
         
     # 차트를 저장
     np.save(out_tenuto, np.array(chart_tenuto, dtype=np.int64))
@@ -1319,10 +1334,11 @@ def filter_tenuto_trill_chart(chartfile, out_tenuto, out_trill):
 def filter_glissando_simple_chart(chartfile, tenutofile, out_glissando, out_simple):
     # table_chart에서 글리산도와 일반노트를 추출
     # 두 노트의 차트 구조:
-    #   array element: [y,x1,x2],
+    #   array element: [y,x1,x2,lr],
     #       y: 시간축, 정수값 (0, T-1)
     #       x1,x2: 건반축 시작과 끝, 정수값 (0~27)
-    #   array shape: (None,3)
+    #       lr: 왼쪽/오른쪽 구분 (0: 왼쪽, 1: 오른쪽)
+    #   array shape: (None,4)
     
     import torch
     
@@ -1331,24 +1347,33 @@ def filter_glissando_simple_chart(chartfile, tenutofile, out_glissando, out_simp
     # chart에서 tenuto를 구성하는 start노트를 제거
     chart_tenuto = torch.from_numpy(np.load(tenutofile))
     mask = torch.ones(table_chart.shape[0], dtype=torch.bool)
-    for y1,_y2,x1,x2 in chart_tenuto:
-        note_start = torch.tensor([y1,x1,(x2-x1+1),3], dtype=torch.int64)
+    for y1,_y2,x1,x2,lr in chart_tenuto:
+        note_type = 3 if lr == 0 else 7
+        note_start = torch.tensor([y1,x1,(x2-x1+1),note_type], dtype=torch.int64)
         idx_start = torch.argwhere((table_chart == note_start).all(dim=1)).squeeze().item()
         mask[idx_start] = False
         
     table_chart = table_chart[mask]
-    
+
     # glissando 노트 추출
-    chart_glissando = table_chart[table_chart[:,3] == 2, :3]
+    chart_glissando_L = table_chart[table_chart[:,3] == 2, :3]
+    chart_glissando_L = torch.hstack((chart_glissando_L, torch.zeros((chart_glissando_L.shape[0],1), dtype=torch.int64)))
+    chart_glissando_R = table_chart[table_chart[:,3] == 6, :3]
+    chart_glissando_R = torch.hstack((chart_glissando_R, torch.ones((chart_glissando_R.shape[0],1), dtype=torch.int64)))
+    chart_glissando = torch.vstack((chart_glissando_L, chart_glissando_R))
     if chart_glissando.shape[0] == 0:
-        chart_glissando = np.empty((0,3), dtype=np.int64)
+        chart_glissando = np.empty((0,4), dtype=np.int64)
     else:
         chart_glissando[:,2] = chart_glissando[:,1] + chart_glissando[:,2] - 1
     
     # simple 노트 추출
-    chart_simple = table_chart[table_chart[:,3] == 3, :3]
+    chart_simple_L = table_chart[table_chart[:,3] == 3, :3]
+    chart_simple_L = torch.hstack((chart_simple_L, torch.zeros((chart_simple_L.shape[0],1), dtype=torch.int64)))
+    chart_simple_R = table_chart[table_chart[:,3] == 7, :3]
+    chart_simple_R = torch.hstack((chart_simple_R, torch.ones((chart_simple_R.shape[0],1), dtype=torch.int64)))
+    chart_simple = torch.vstack((chart_simple_L, chart_simple_R))
     if chart_simple.shape[0] == 0:
-        chart_simple = np.empty((0,3), dtype=np.int64)
+        chart_simple = np.empty((0,4), dtype=np.int64)
     else:
         chart_simple[:,2] = chart_simple[:,1] + chart_simple[:,2] - 1
     
@@ -1705,51 +1730,63 @@ def draw_fs_arr(fsfile, outdir, barfile="", tenutofile="", trillfile="", glissan
             fs_img[yl:yr] = np.array([64, 64, 64])   # 회색 마디선
     
     padding = 2
+    # chart의 노트타입별 처리
+    colors = np.array(
+        [[128,128,128],     # noise
+         [0,63,255],        # end-L
+         [255,255,191],      # glissando-L
+         [191,191,255],     # simple-L
+         [127,0,255],       # trill-L
+         [255,63,0],        # end-R
+         [255,191,0],       # glissando-R
+         [255,191,191],     # simple-R
+         [255,0,127]]       # trill-R
+    )
 
     # tenuto 노트 처리
     if tenutofile:
         chart_tenuto = np.load(tenutofile)
-        for y1,y2,x1,x2 in chart_tenuto:
+        for y1,y2,x1,x2,lr in chart_tenuto:
             fs_arr[y1:y2+1,x1:x2+1,:] = 0   # tenuto가 놓인 위치의 라벨을 전부 제거
             yl = H - (y2+1) * lh
             yr = H - (y1) * lh
             xl = x1 * lw + padding
             xr = (x2+1) * lw - padding
-            fs_img[yl:yr,xl:xr] = np.array([0,255,0])     # 초록색 사각형
-    
+            fs_img[yl:yr,xl:xr] = colors[1] if lr == 0 else colors[5]   # 초록색 사각형
+
     # trill 노트 처리
     if trillfile:
         chart_trill = np.load(trillfile)
-        for y1,y2,x1,x2 in chart_trill:
+        for y1,y2,x1,x2,lr in chart_trill:
             fs_arr[y1:y2+1,x1:x2+1,:] = 0   # trill이 놓인 위치의 라벨을 전부 제거
             yl = H - (y2+1) * lh
             yr = H - (y1) * lh
             xl = x1 * lw + padding
             xr = (x2+1) * lw - padding
-            fs_img[yl:yr,xl:xr] = np.array([255,0,255])     # 보라색 사각형
-            
+            fs_img[yl:yr,xl:xr] = colors[4] if lr == 0 else colors[8]  # 보라색 사각형
+
     # glissando 노트 처리
     if glissandofile:
         chart_glissando = np.load(glissandofile)
-        for y,x1,x2 in chart_glissando:
+        for y,x1,x2,lr in chart_glissando:
             fs_arr[y,x1:x2+1,:] = 0   # glissando가 놓인 위치의 라벨을 전부 제거
             yl = H - (y+1) * lh
             yr = H - (y) * lh
             xl = x1 * lw + padding
             xr = (x2+1) * lw - padding
-            fs_img[yl:yr,xl:xr] = np.array([255,255,0])     # 노란색 사각형
-    
+            fs_img[yl:yr,xl:xr] = colors[2] if lr == 0 else colors[6]   # 노란색 사각형
+
     # simple 노트 처리
     if simplefile:
         chart_simple = np.load(simplefile)
-        for y,x1,x2 in chart_simple:
+        for y,x1,x2,lr in chart_simple:
             fs_arr[y,x1:x2+1,:] = 0   # simple가 놓인 위치의 라벨을 전부 제거
             yl = H - (y+1) * lh
             yr = H - (y) * lh
             xl = x1 * lw + padding
             xr = (x2+1) * lw - padding
-            fs_img[yl:yr,xl:xr] = np.array([255,255,255])     # 흰색 사각형
-        
+            fs_img[yl:yr,xl:xr] = colors[3] if lr == 0 else colors[7]   # 흰색 사각형
+
     # 나머지 라벨이 존재하는 곳에 표기 (noise)
     fs_mask = fs_arr[:,:,2:].sum(axis=2) > 0
     
@@ -1763,7 +1800,8 @@ def draw_fs_arr(fsfile, outdir, barfile="", tenutofile="", trillfile="", glissan
         
         # 텍스트
         multi_hot = fs_arr[i,j]
-        pat_hot = multi_hot[2:]
+        pat_hot = multi_hot[2:14]
+        # pat_hot = multi_hot[14:]
         label_l = ''.join([f"{hEx(l)}" for k,l in enumerate(pat_hot) if k % 3 == 0])
         label_m = ''.join([f"{hEx(l)}" for k,l in enumerate(pat_hot) if k % 3 == 1])
         label_r = ''.join([f"{hEx(l)}" for k,l in enumerate(pat_hot) if k % 3 == 2])
@@ -1921,10 +1959,10 @@ def run():
     #   Setting 3 은 특정 step의 undo를 위해 사용 가능합니다.
     
     ### Setting 0-1. data path
-    datadir = "nosdb/video_expert"
-    metadir = "nosdb/video_expert_meta"
-    outdir = "nosdb/video_expert_output"
-    cfgdir = "nosdb/video_expert_config"
+    datadir = "data/dataset_chart/real_video"
+    metadir = "data/dataset_chart/real_meta"
+    outdir = "output"
+    cfgdir = "data/dataset_chart/real_config"
     
     os.makedirs(outdir, exist_ok=True)
 
@@ -1983,8 +2021,8 @@ def run_demo():
     #   Setting 3 은 특정 step의 undo를 위해 사용 가능합니다.
     
     ### Setting 1. data path
-    videofile = "data/demo.mp4"
-    metafile = "data/demo.json"
+    videofile = "data/demo1.webm"
+    metafile = "data/demo1.json"
     configfile = "data/config.yaml"     # optional
     outdir = "output"
     
