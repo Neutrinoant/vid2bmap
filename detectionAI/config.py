@@ -25,7 +25,7 @@ class Config():
     train_number_epochs = 1000
     imgsize = (27,41)
     
-    thr_max_dist = 0.5
+    thr_max_dist = 0.25
     
     num_workers = 6
     

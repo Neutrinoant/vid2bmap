@@ -4,6 +4,7 @@ from typing import Optional, Tuple
 
 import cv2
 import numpy as np
+from PIL import Image
 import torch
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -373,19 +374,135 @@ def show_labels_one_hot(one_hot_labels, bbox, image, outfile=""):
     else:
         cv2.imshow("labels", image)
         cv2.waitKey(0)
-        
+
+def pca_2d(pos_path):
+    import json
+    import matplotlib.pyplot as plt
+    from sklearn.decomposition import PCA
+    from sklearn.preprocessing import StandardScaler
+
+    from detectionAI.config import Config as CfgAI
+    
+    def load_json(file):
+        with open(file, "rt") as f:
+            return json.load(f)
+
+    reference_dataset = load_json(CfgAI.ref_path)
+    Y_ref_arr = torch.tensor(reference_dataset["centroids_y"])
+    names = reference_dataset["names"]
+    L = Y_ref_arr.shape[0]
+
+    Y_pos_label = np.load(pos_path)
+    Y_pos = Y_pos_label[:, :-1]
+    Y_label = Y_pos_label[:, -1]
+    scaler = StandardScaler()
+    scaled_pos = scaler.fit_transform(Y_pos)
+
+    pca = PCA(2)
+    comps = pca.fit_transform(scaled_pos)
+
+    plt.scatter(comps[:L, 0], comps[:L, 1], c="red", label="centroid", s=20)
+    comps = comps[L:]
+    Y_label = Y_label[L:]
+    for label in np.unique(Y_label.astype(int)):
+        s = 2 if label != 0 else 0.1
+        alpha = 1 if label != 0 else 0.8
+        labeled_comps = comps[Y_label == label]
+        comps_len = len(labeled_comps)
+        sampled_idx = np.random.choice(np.arange(comps_len), size=int(comps_len*0.05 + 1), replace=False) if label == 0 else np.arange(comps_len)
+        plt.scatter(labeled_comps[sampled_idx, 0], labeled_comps[sampled_idx, 1], label=f"{names[label - 1] if label != 0 else "BG"}", s=s, alpha=alpha)
+    plt.xlabel("x")
+    plt.ylabel("y")
+    plt.legend()
+    plt.title("PCA of Model Outcomes")
+    plt.show()
+
+def pca_3d(pos_path):
+    import json
+    import matplotlib.pyplot as plt
+    from sklearn.decomposition import PCA
+    from sklearn.preprocessing import StandardScaler
+
+    from detectionAI.config import Config as CfgAI
+    
+    def load_json(file):
+        with open(file, "rt") as f:
+            return json.load(f)
+
+    reference_dataset = load_json(CfgAI.ref_path)
+    Y_ref_arr = torch.tensor(reference_dataset["centroids_y"])
+    names = reference_dataset["names"]
+    L = Y_ref_arr.shape[0]
+
+    Y_pos_label = np.load(pos_path)
+    Y_pos = Y_pos_label[:, :-1]
+    Y_label = Y_pos_label[:, -1]
+    scaler = StandardScaler()
+    scaled_pos = scaler.fit_transform(Y_pos)
+
+    pca = PCA(3)
+    comps = pca.fit_transform(scaled_pos)
+
+    fig = plt.figure()
+    ax = fig.add_subplot(projection='3d')
+    ax.scatter(comps[:L, 0], comps[:L, 1], comps[:L, 2], c="red", label="centroid", s=20)
+    comps = comps[L:]
+    Y_label = Y_label[L:]
+    for label in np.unique(Y_label.astype(int)):
+        if label > 1:
+            continue
+        s = 2 if label != 0 else 0.1
+        alpha = 1 if label != 0 else 0.8
+        labeled_comps = comps[Y_label == label]
+        comps_len = len(labeled_comps)
+        sampled_idx = np.random.choice(np.arange(comps_len), size=int(comps_len*0.01 + 1), replace=False) \
+            if label == 0 else np.random.choice(np.arange(comps_len), size=int(comps_len*0.1 + 1), replace=False)
+        ax.scatter(labeled_comps[sampled_idx, 0], labeled_comps[sampled_idx, 1], labeled_comps[sampled_idx, 2], \
+                   label=f"{names[label - 1] if label != 0 else "BG"}", s=s, alpha=alpha)
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
+    ax.legend()
+    ax.set_title("PCA of Model Outcomes")
+    plt.show()
+
 
 if __name__ == "__main__":
+    # bbox를 frame에 그려서 확인
+    # start_idx = 6442
+    # img_cnt = 14
+    # imgs = [cv2.imread(f"data/frames/{i:05}.jpg") for i in range(start_idx, start_idx + img_cnt)]
     
-    start_idx = 945
-    img_cnt = 5
-    imgs = [cv2.imread(f"data/{i:05}.jpg") for i in range(start_idx, start_idx + img_cnt)]
-    
-    bboxfile = str(Path("output/demo_lowh") / "bbox.npy")
-    bbox = np.load(bboxfile)
-    for i in range(img_cnt):
-        imgs[i] = cv2_draw_bboxes(imgs[i], bbox.reshape((-1, 4)), thickness=1)
+    # bboxfile = str(Path("output/t228gbtTZoY") / "bbox.npy")
+    # bbox = np.load(bboxfile)
+    # for i in range(img_cnt):
+    #     imgs[i] = cv2_draw_bboxes(imgs[i], bbox.reshape((-1, 4)), thickness=1)
 
-    for img in imgs:
-        cv2.imshow("rect", img)
-        cv2.waitKey(0)
+    # for img in imgs:
+    #     cv2.imshow("rect", img)
+    #     cv2.waitKey(0)
+
+
+    # frame에서 bbox에 해당하는 부분 추출
+    # start_idx = 952
+    # img_cnt = 15
+    # youtube_code = "WAQa1-O8Mew"
+
+    # imgs = [Image.open(f"data/frames/{i:05}.jpg") for i in range(start_idx, start_idx + img_cnt)]
+
+    # bboxfile = str(Path("output") / youtube_code / "bbox.npy")
+    # bbox = np.load(bboxfile)
+
+    # os.makedirs("data/rois", exist_ok=True)
+
+    # for i in range(img_cnt):
+    #     os.makedirs(f"data/rois/{i:05}", exist_ok=True)
+
+    #     imgrois = [imgs[i].crop((x1, y1, x2 + 1, y2 + 1)) for y1, x1, y2, x2 in bbox.reshape((-1, 4))]
+    #     for j, imgroi in enumerate(imgrois):
+    #         imgroi.save(f"data/rois/{i:05}/{youtube_code}_{j:03}.jpg")
+
+    base_dir = "output/"
+    for output in ["t228gbtTZoY"]:
+        dir = base_dir + output
+        pca_3d(str(Path(dir) / "Y_pos_label.npy"))

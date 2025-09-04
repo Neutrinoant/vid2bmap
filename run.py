@@ -230,7 +230,9 @@ def label_bbox_frames_fast(frame_paths, bboxfile, outfile):
         # L_ref_arr = torch.concat(L_ref_arr, dim=0).to(CfgAI.device)
         increase_idx = torch.argsort(L_ref_arr)
         Y_label = Y_ref_arr[increase_idx]   # shape: (L,10), L: number of labels
-        
+        Y_pos = Y_label.clone().detach()
+        Y_predict = torch.arange(1, len(Y_pos) + 1).to(CfgAI.device)
+
         label_arr = []
         
         for img_tensors in tqdm(rois_dataloader):
@@ -242,11 +244,14 @@ def label_bbox_frames_fast(frame_paths, bboxfile, outfile):
             
             # choose label
             Y_test_arr = Y_test_arr.view(-1,1,*Y_test_arr.shape[1:])     # shape: (B*G,1,10)
+            Y_pos = torch.cat((Y_pos, Y_test_arr.squeeze().detach()))
             D = torch.sum((Y_test_arr - Y_label)**2, dim=2)**0.5        # shape: (B*G,L)
             
             Id_min = torch.argmin(D, dim=1)
             D_min = D[np.arange(D.shape[0]),Id_min]
+            D_min[Id_min == 0] *= 10
             Id_filtered = torch.where(D_min < CfgAI.thr_max_dist, Id_min+1, 0)    # add 1 to keep 0 as 'default' class
+            Y_predict = torch.cat((Y_predict, Id_filtered))
             
             label_ids = Id_filtered.view(B, H_G, W_G)
             label_arr.append(label_ids)
@@ -254,8 +259,17 @@ def label_bbox_frames_fast(frame_paths, bboxfile, outfile):
         label_arr = torch.concat(label_arr, dim=0)
         label_arr = label_arr.detach().cpu().numpy()
     
+    # for i in range(397, 411):
+    #     label = label_arr[i]
+    #     for k in range(label.shape[0]):
+    #         for w in range(label.shape[1]):
+    #             print(label[k, w], end=" ")
+    #         print()
+    #     print()
+
     np.save(outfile, label_arr)
-    
+    np.save(str(Path(outfile).parent / "Y_pos_label.npy"), torch.hstack((Y_pos, Y_predict.view(-1, 1))).cpu().numpy())
+
 @checkpoint
 def graph_partition(labelfile, outfile, thr_dist=1):
     
@@ -766,7 +780,7 @@ def frame_displacement(labelfile, cftgfile, outfile):
         table_cluster_mm_frame[i] = torch.tensor([min_frame, max_frame])
         
         frames = table_f[mask]
-        assert frames.shape == frames.unique().shape
+        assert frames.shape == frames.unique().shape, "1"
         table_cluster_num_frames[i] = frames.shape[0]
         
         table_o[mask] = table_t[mask] - min_time
@@ -819,7 +833,7 @@ def frame_displacement(labelfile, cftgfile, outfile):
         cluster_used = [cid_0]
         
         # 두번째 클러스터부터의 작업
-        # irregular_clusters = []
+        irregular_clusters = []
         for cid in clusters_sub_sorted[1:]:
             indices_c = torch.argwhere(table_c_sub == cid).flatten()
             
@@ -832,10 +846,9 @@ def frame_displacement(labelfile, cftgfile, outfile):
             
             # 세로 클러스터 조건2: 현재 프레임중 이미 처리했던 프레임이 1개이상 존재해야함
             #   나중에 다시 처리 필요
-            # if intersection.numel() == 0:
-            #     irregular_clusters.append(cid)
-            #     continue
-            assert intersection.numel() > 0
+            if intersection.numel() == 0:
+                irregular_clusters.append(cid)
+                continue
             
             # 겹치는 프레임들의 d 값을 구해둠
             dominant_d = table_frame_d[intersection]
@@ -865,7 +878,6 @@ def frame_displacement(labelfile, cftgfile, outfile):
             cluster_used += [cid]
             
         # 정상 클러스터만 포함 (개수: C'')
-        assert cluster_used == clusters_sub_sorted.tolist()
         cluster_used = torch.tensor(cluster_used)
             
         # 거대한 클러스터 다리 (C'',M) 행렬을 준비 (M: 클러스터를 조건에 맞게 넓은면끼리 이어붙일때 그 폭)
@@ -1043,37 +1055,30 @@ def inspect_cluster(yxcfile, labelfile, fsfile, outfile, thr_kernel=0.1, thr_min
         
         # label 순서에 따른 시작위치.
         # 0(background), 1(bar), 2/4/6(end-L), 3/5/7(end-R), 8/10/12(glissando-L), 9/11/13(glissando-R),
-        # 14/16/18(simple-L), 15/17/19(simple-R), 20/22/24(trill-L), 21/23/25(trill-R)
-        if n in [1,2,3]:
+        # 14/16/18(simple-L), 15/17/19(simple-R), 20/22/24/26/28/30(trill-L), 21/23/25/27/29/31(trill-R)
+        if n <= 4:
             s = 2+6*(n-1)
-        elif n == 4:
-            s = 2+6*2   # trill은 기본 simple로 해야함
-        elif n in [5,6,7]:
+        else:
             s = 3+6*(n-5)
-        else:   # n == 8
-            s = 3+6*2   # trill은 기본 simple로 해야함
-        
+
         # kernel의 정의
         ker = torch.zeros((L+1,w), dtype=torch.int64)
-        ker[s,0] = ker[s+4,-1] = 1
-        for i in range(1,w-1):
-            ker[s+2,i] = 1
-        if n == 4:
+
+        if n in [4, 8]:
+            ker[s+2,0] = ker[s+10,-1] = 1
+            for i in range(1,w-1):
+                ker[s+6,i] = 1
             if w % 2 == 0:
-                ker[s+2,[w//2-1,w//2]] = 0
-                ker[2+6*3,w//2-1] = 1
-                ker[2+6*3+4,w//2] = 1
+                ker[s+6,[w//2-1,w//2]] = 0
+                ker[s,w//2-1] = 1
+                ker[s+8,w//2] = 1
             else:
-                ker[s+2,w//2] = 0
-                ker[2+6*3+2,w//2] = 1
-        elif n == 8:
-            if w % 2 == 0:
-                ker[s+2,[w//2-1,w//2]] = 0
-                ker[3+6*3,w//2-1] = 1
-                ker[3+6*3+4,w//2] = 1
-            else:
-                ker[s+2,w//2] = 0
-                ker[3+6*3+2,w//2] = 1
+                ker[s+6,w//2] = 0
+                ker[s+4,w//2] = 1
+        else:
+            ker[s,0] = ker[s+4,-1] = 1
+            for i in range(1,w-1):
+                ker[s+2,i] = 1
         ker = ker / w
         
         # kernel값의 통과한도 결정 (maximum G_H)
@@ -1883,6 +1888,8 @@ def draw_chart(outdir):
                     tenutofile=tenutofile, 
                     trillfile=trillfile, 
                     glissandofile=glissandofile)
+        return True
+    return False
 
 
 def reset_draw_chart(outdir):
@@ -1985,6 +1992,7 @@ def run():
         os.makedirs(rootdir, exist_ok=True)
         
         logger.info(f"{rootdir}")
+        is_chart_drawn = False
         try:
             cfg = get_cfg_defaults()
             if Path(cp).exists():
@@ -1996,7 +2004,7 @@ def run():
             run_until_fs_after_label(outdir=rootdir, cfg=cfg)
             run_until_pattern_after_fs(outdir=rootdir, cfg=cfg, debug=True)
             run_until_chart_after_pattern(outdir=rootdir)
-            draw_chart(rootdir)
+            is_chart_drawn = draw_chart(rootdir)
             
             # ### Setting 2-2. final revision
             # manual_update_chart(rootdir)
@@ -2011,6 +2019,9 @@ def run():
         except Exception as e:
             logger.error(e)
             pass
+        
+        if is_chart_drawn:
+            input("Enter to continue")
 
 
 def run_demo():
@@ -2061,5 +2072,5 @@ def run_demo():
 
 
 if __name__ == "__main__":
-    # run()
-    run_demo()
+    run()
+    # run_demo()
