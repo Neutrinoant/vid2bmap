@@ -449,8 +449,8 @@ def pca_3d(pos_path):
     comps = comps[L:]
     Y_label = Y_label[L:]
     for label in np.unique(Y_label.astype(int)):
-        if label > 1:
-            continue
+        # if label > 1:
+        #     continue
         s = 2 if label != 0 else 0.1
         alpha = 1 if label != 0 else 0.8
         labeled_comps = comps[Y_label == label]
@@ -458,7 +458,7 @@ def pca_3d(pos_path):
         sampled_idx = np.random.choice(np.arange(comps_len), size=int(comps_len*0.01 + 1), replace=False) \
             if label == 0 else np.random.choice(np.arange(comps_len), size=int(comps_len*0.1 + 1), replace=False)
         ax.scatter(labeled_comps[sampled_idx, 0], labeled_comps[sampled_idx, 1], labeled_comps[sampled_idx, 2], \
-                   label=f"{names[label - 1] if label != 0 else "BG"}", s=s, alpha=alpha)
+                   label=f"{names[label] if label != 0 else "BG"}", s=s, alpha=alpha)
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     ax.set_zlabel("z")
@@ -483,7 +483,7 @@ if __name__ == "__main__":
     #     cv2.waitKey(0)
 
 
-    # frame에서 bbox에 해당하는 부분 추출
+    # frame에서 bbox에 해당하는 부분 모두 추출
     # start_idx = 952
     # img_cnt = 15
     # youtube_code = "WAQa1-O8Mew"
@@ -501,7 +501,34 @@ if __name__ == "__main__":
     #     imgrois = [imgs[i].crop((x1, y1, x2 + 1, y2 + 1)) for y1, x1, y2, x2 in bbox.reshape((-1, 4))]
     #     for j, imgroi in enumerate(imgrois):
     #         imgroi.save(f"data/rois/{i:05}/{youtube_code}_{j:03}.jpg")
+    
 
+    # frame에서 bbox에 해당하는 부분 랜덤으로 추출
+    # frame_dir = ["output/" + dir + "/frames" for dir in os.listdir("output")]
+    # for i, dir in enumerate(frame_dir):
+    #     frame_dir[i] = [frame_dir[i] + "/" + img_path for img_path in os.listdir(dir)]
+
+    # os.makedirs("data/rois", exist_ok=True)
+    # for fs in frame_dir:
+    #     if np.random.rand() > 0.2:
+    #         continue
+    #     bboxfile = str(Path("output") / Path(fs[0]).parent.parent.name / "bbox.npy")
+    #     try:
+    #         bbox = np.load(bboxfile).reshape((-1, 4))
+    #     except Exception as e:
+    #         continue
+    #     fs = np.random.choice(fs, size=int(len(fs) * 0.001), replace=False)
+    #     for f in fs:
+    #         img = Image.open(f)
+    #         imgrois = [img.crop((x1, y1, x2 + 1, y2 + 1)) for y1, x1, y2, x2 in bbox]
+    #         roi_idx = np.random.choice(len(imgrois), size=int(len(imgrois) * 0.01), replace=False)
+    #         for idx in roi_idx:
+    #             roi = imgrois[idx]
+    #             roi.save(f"data/rois/{Path(f).parent.parent.name}_{Path(f).stem}_{idx:03}.jpg")
+
+
+
+    # pca visualization
     base_dir = "output/"
     for output in ["t228gbtTZoY"]:
         dir = base_dir + output

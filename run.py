@@ -249,8 +249,8 @@ def label_bbox_frames_fast(frame_paths, bboxfile, outfile):
             
             Id_min = torch.argmin(D, dim=1)
             D_min = D[np.arange(D.shape[0]),Id_min]
-            D_min[Id_min == 0] *= 10
-            Id_filtered = torch.where(D_min < CfgAI.thr_max_dist, Id_min+1, 0)    # add 1 to keep 0 as 'default' class
+            # D_min[Id_min == 0] *= 10
+            Id_filtered = torch.where(D_min < CfgAI.thr_max_dist, Id_min, 0)
             Y_predict = torch.cat((Y_predict, Id_filtered))
             
             label_ids = Id_filtered.view(B, H_G, W_G)
@@ -2020,8 +2020,8 @@ def run():
             logger.error(e)
             pass
         
-        if is_chart_drawn:
-            input("Enter to continue")
+        # if is_chart_drawn:
+        #     input("Enter to continue")
 
 
 def run_demo():
