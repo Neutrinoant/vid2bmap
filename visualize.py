@@ -456,14 +456,14 @@ def pca_3d(pos_path):
         labeled_comps = comps[Y_label == label]
         comps_len = len(labeled_comps)
         sampled_idx = np.random.choice(np.arange(comps_len), size=int(comps_len*0.01 + 1), replace=False) \
-            if label == 0 else np.random.choice(np.arange(comps_len), size=int(comps_len*0.1 + 1), replace=False)
+            if label == 0 else np.random.choice(np.arange(comps_len), size=int(comps_len), replace=False)
         ax.scatter(labeled_comps[sampled_idx, 0], labeled_comps[sampled_idx, 1], labeled_comps[sampled_idx, 2], \
                    label=f"{names[label] if label != 0 else "BG"}", s=s, alpha=alpha)
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     ax.set_zlabel("z")
     ax.legend()
-    ax.set_title("PCA of Model Outcomes")
+    ax.set_title("PCA of All Embedding Vectors from a Beatmap")
     plt.show()
 
 
@@ -530,6 +530,6 @@ if __name__ == "__main__":
 
     # pca visualization
     base_dir = "output/"
-    for output in ["t228gbtTZoY"]:
+    for output in ["demo1"]:
         dir = base_dir + output
         pca_3d(str(Path(dir) / "Y_pos_label.npy"))

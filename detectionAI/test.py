@@ -409,9 +409,12 @@ def test_color(ckpt_path, label_json=None):
         count_true = torch.count_nonzero(correct)
         
     correct_ratio = 100 * count_true/count_all
-    
-    return correct_ratio.detach().cpu().numpy(), L_test_arr[wrong], Id_filtered[wrong], L_test_arr[correct]
-    
+
+    return correct_ratio.detach().cpu().numpy(),\
+        L_test_arr[wrong].detach().cpu().numpy().tolist(),\
+        Id_filtered[wrong].detach().cpu().numpy().tolist(),\
+        L_test_arr[correct].detach().cpu().numpy().tolist()
+
 def test_all_checkpoints(ckpt_paths):
     
     ratios = []
@@ -436,5 +439,7 @@ if __name__ == "__main__":
 
     build_label_json_color(Config.checkpoint_path, outpath="detectionAI/data/label_color.json")
     
-    ratio = test_color(Config.checkpoint_path)
-    print(ratio[:3])
+    res = test_color(Config.checkpoint_path)
+    print("ratio:", res[0].item())
+    print("wrong true labels:", list(res[1]))
+    print("wrong predicted labels:", list(res[2]))
