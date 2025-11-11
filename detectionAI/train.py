@@ -133,6 +133,7 @@ def train_color():
     counter = []
     loss_history = []
     iteration_number = 0
+    streak = 0
 
     for epoch in range(0, Config.train_number_epochs):
         total_loss = 0.
@@ -150,7 +151,8 @@ def train_color():
             total_loss += loss_contrastive.item()
         else:
             avg_loss = total_loss/(i+1)
-            logger.info(f"Epoch {epoch}: Average loss {avg_loss}")
+            streak = streak + 1 if avg_loss < 0.005 else 0
+            logger.info(f"Epoch {epoch}: Average loss {avg_loss} / streak {streak}")
             iteration_number += i+1
             counter.append(iteration_number)
             loss_history.append(avg_loss)
@@ -172,7 +174,10 @@ def train_color():
         'epoch': total_epoch
         }, os.path.join(Config.checkpoint_dir, f"last.ckpt"))
     
-    plt.plot(counter,loss_history)
+    plt.plot(loss_history)
+    plt.xlabel("Epoch")
+    plt.ylabel("Average Loss")
+    plt.title("Training Loss over Epochs")
     plt.savefig("detectionAI/loss.jpg")
 
 

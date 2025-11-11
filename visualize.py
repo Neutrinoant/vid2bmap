@@ -3,11 +3,20 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import cv2
+import json
 import numpy as np
 from PIL import Image
 import torch
-from matplotlib.figure import Figure
+from torch.utils.data import DataLoader
+import torchvision.datasets as dset
+import torchvision.transforms as transforms
 from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
+
+from detectionAI.config import Config
+from detectionAI.dataset import LabeledDataset
+from detectionAI.model import SiameseNetworkColor
 
 
 def get_text_size(
@@ -527,9 +536,239 @@ if __name__ == "__main__":
     #             roi.save(f"data/rois/{Path(f).parent.parent.name}_{Path(f).stem}_{idx:03}.jpg")
 
 
-
     # pca visualization
-    base_dir = "output/"
-    for output in ["demo1"]:
-        dir = base_dir + output
-        pca_3d(str(Path(dir) / "Y_pos_label.npy"))
+    # base_dir = "output/"
+    # for output in ["demo1"]:
+    #     dir = base_dir + output
+    #     pca_3d(str(Path(dir) / "Y_pos_label.npy"))
+
+
+    # test visualization
+    def load_json(file):
+        with open(file, "rt") as f:
+            return json.load(f)
+
+    Config.seed_everything(100)
+
+    print(f"run on device {Config.device}")
+
+    # load trained data
+    ckpt_path = Config.checkpoint_path
+    checkpoint = torch.load(ckpt_path, map_location=Config.device)
+    model_state_dict = checkpoint["model_state_dict"]
+
+    # model setting 
+    net = SiameseNetworkColor(imgsize=Config.imgsize)
+    net.load_state_dict(model_state_dict)
+    net = net.to(Config.device)
+
+    net.eval()  # affects BatchNorm layer
+
+    correct = []
+
+    # image config
+    transform = transforms.Compose([transforms.Resize(Config.imgsize), transforms.ToTensor()])
+    gray = False
+    should_invert = False
+
+    # ready for test dataset
+    folder_dataset_test = dset.ImageFolder(root=Config.testing_dir)
+    test_dataset = LabeledDataset(imageFolderDataset=folder_dataset_test,
+                                            transform=transform,
+                                            should_invert=should_invert,
+                                            gray=gray)
+
+    test_dataloader = DataLoader(test_dataset, num_workers=0, batch_size=64, shuffle=False)
+
+    label_json = None
+    if label_json is not None:
+        reference_dataset = label_json
+    else:
+        reference_dataset = load_json(Config.ref_path)
+
+    with torch.no_grad():   # gradient 계산 메모리 사용을 꺼버림
+
+        Y_ref_arr = torch.tensor(reference_dataset["centroids_y"]).to(Config.device)
+        L_ref_arr = torch.tensor(reference_dataset["ids"]).to(Config.device)
+        
+        assert torch.unique(L_ref_arr).shape == L_ref_arr.shape
+        
+        # test dataset forward
+        Y_test_arr = []
+        L_test_arr = []
+        
+        X_test_arr = []
+        for test_data in test_dataloader:
+            X_test, L_test = test_data
+            X_test = X_test.to(Config.device)
+            Y_test = net.forward_once(X_test)
+            Y_test_arr.append(Y_test)
+            L_test_arr.append(L_test)
+            X_test_arr.append(X_test)
+        
+        Y_test_arr = torch.concat(Y_test_arr, dim=0).to(Config.device)
+        L_test_arr = torch.concat(L_test_arr, dim=0).to(Config.device)
+        X_test_arr = torch.concat(X_test_arr, dim=0).to(Config.device)
+        
+        # choose label
+        D2_arr = []
+        for label_id in L_ref_arr:
+            Y_label = Y_ref_arr[L_ref_arr == label_id][0]   # 어차피 1개뿐
+            Dist2 = torch.sum((Y_test_arr - Y_label)**2, dim=1, keepdim=True)
+            D2_arr.append(Dist2)
+            
+        D_arr = torch.concat(D2_arr, dim=1)**0.5
+        Id_min = torch.argmin(D_arr, dim=1)
+        D_min_arr = D_arr[np.arange(D_arr.shape[0]),Id_min]
+        Id_filtered = torch.where(D_min_arr < Config.thr_max_dist, Id_min, len(L_ref_arr))
+        
+        unique_values = torch.unique(L_test_arr)
+
+        selected_indices = []
+        for val in unique_values:
+            # Find all indices where tensor == val
+            # .nonzero() on a 1D tensor returns shape [N, 1]
+            # .view(-1) flattens it to a 1D list of indices, shape [N]
+            all_indices_for_val = (L_test_arr == val).nonzero().view(-1)
+            
+            # Get the number of occurrences
+            num_occurrences = all_indices_for_val.shape[0]
+            
+            # Select one random integer between 0 and N-1
+            random_sample_idx = torch.randint(0, num_occurrences, (1,)).item()
+            
+            # Get the final 1D index from our list
+            chosen_index = all_indices_for_val[random_sample_idx]
+            
+            selected_indices.append(chosen_index)
+        
+        final_indices = torch.stack(selected_indices).detach().cpu().numpy()
+        print(final_indices)
+
+        correct = (L_test_arr == Id_filtered)
+        wrong = (L_test_arr != Id_filtered)
+        wrong_indices = torch.where(wrong)[0].detach().cpu().numpy()
+        print(wrong_indices)
+        count_all = correct.shape[0]
+        count_true = torch.count_nonzero(correct)
+
+    # test result plotting
+    # --- 1. Define Grid Parameters ---
+    ROWS = 4
+    COLS = 8
+    TOTAL_IMAGES = ROWS * COLS
+
+    # --- 2. Simulate Your Data (Now with Color) ---
+    plot_data = []
+    for i in range(TOTAL_IMAGES):
+        img = X_test_arr[final_indices[i]].permute(1, 2, 0).cpu().numpy()
+        
+        label_true = reference_dataset["names"][L_test_arr[final_indices[i]].item()]
+        label_pred = reference_dataset["names"][Id_filtered[final_indices[i]].item()]
+        label_dist = D_min_arr[final_indices[i]].item()
+        label = f"{label_true}|{label_pred}|{label_dist:.2f}"
+        
+        is_red = label_dist >= Config.thr_max_dist
+        
+        plot_data.append({
+            'image': img,
+            'label': label,
+            'is_red': is_red
+        })
+
+    # --- 3. Create the Plot Grid ---
+    fig, axes = plt.subplots(ROWS, COLS, figsize=(15, 18))
+    fig.patch.set_facecolor('white')
+
+    # --- 4. Loop Through Data and Plot ---
+    for idx, ax in enumerate(axes.flat):
+        if idx < len(plot_data):
+            data = plot_data[idx]
+            img = data['image']
+            label = data['label']
+            is_red = data['is_red']
+
+            # Display the RGB image
+            ax.imshow(img)
+
+            # --- Add the Label ---
+            bg_color = 'red' if is_red else 'black'
+            img_height, img_width, _ = img.shape
+            
+            ax.text(
+                x=img_width / 2,
+                y=-img_height * 0.15,
+                s=label,
+                color='white',
+                fontsize=12,
+                ha='center',
+                va='center',
+                bbox=dict(facecolor=bg_color, edgecolor='none', pad=1.5)
+            )
+
+        # Turn off the axes
+        ax.axis('off')
+
+    # Show the plot
+    # plt.show()
+
+    # negative examples plotting
+    # --- 1. Define Grid Parameters ---
+    ROWS = 2
+    COLS = 4
+    TOTAL_IMAGES = ROWS * COLS
+
+    # --- 2. Simulate Your Data (Now with Color) ---
+    plot_data = []
+    for i in range(TOTAL_IMAGES):
+        img = X_test_arr[wrong_indices[i]].permute(1, 2, 0).cpu().numpy()
+        
+        label_true = reference_dataset["names"][L_test_arr[wrong_indices[i]].item()]
+        pred_id = Id_filtered[wrong_indices[i]].item()
+        label_pred = reference_dataset["names"][pred_id] if pred_id < len(L_ref_arr) else "N"
+        label_dist = D_min_arr[wrong_indices[i]].item()
+        label = f"{label_true}|{label_pred}|{label_dist:.2f}"
+        
+        is_red = label_dist >= Config.thr_max_dist
+        
+        plot_data.append({
+            'image': img,
+            'label': label,
+            'is_red': is_red
+        })
+
+    # --- 3. Create the Plot Grid ---
+    fig, axes = plt.subplots(ROWS, COLS, figsize=(15, 18))
+    fig.patch.set_facecolor('white')
+
+    # --- 4. Loop Through Data and Plot ---
+    for idx, ax in enumerate(axes.flat):
+        if idx < len(plot_data):
+            data = plot_data[idx]
+            img = data['image']
+            label = data['label']
+            is_red = data['is_red']
+
+            # Display the RGB image
+            ax.imshow(img)
+
+            # --- Add the Label ---
+            bg_color = 'red' if is_red else 'black'
+            img_height, img_width, _ = img.shape
+            
+            ax.text(
+                x=img_width / 2,
+                y=-img_height * 0.15,
+                s=label,
+                color='white',
+                fontsize=24,
+                ha='center',
+                va='center',
+                bbox=dict(facecolor=bg_color, edgecolor='none', pad=1.5)
+            )
+
+        # Turn off the axes
+        ax.axis('off')
+
+    # Show the plot
+    plt.show()

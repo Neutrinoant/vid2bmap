@@ -76,8 +76,8 @@ class SiameseNetworkColorDataset(Dataset):
     def __getitem__(self, index):
         img0_tuple = random.choice(self.imageFolderDataset.imgs)
         
-        should_get_same_class = random.randint(0,1)
-        img_pool = self.img_list[img0_tuple[1]] if should_get_same_class else self.img_list_comp[img0_tuple[1]]
+        should_get_same_class = random.randint(1, 100)
+        img_pool = self.img_list[img0_tuple[1]] if should_get_same_class <= 50 else self.img_list_comp[img0_tuple[1]]
         img1_tuple = random.choice(img_pool)
 
         img0 = Image.open(img0_tuple[0])

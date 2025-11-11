@@ -268,7 +268,7 @@ def label_bbox_frames_fast(frame_paths, bboxfile, outfile):
     #     print()
 
     np.save(outfile, label_arr)
-    np.save(str(Path(outfile).parent / "Y_pos_label.npy"), torch.hstack((Y_pos, Y_predict.view(-1, 1))).cpu().numpy())
+    # np.save(str(Path(outfile).parent / "Y_pos_label.npy"), torch.hstack((Y_pos, Y_predict.view(-1, 1))).cpu().numpy())
 
 @checkpoint
 def graph_partition(labelfile, outfile, thr_dist=1):
@@ -2019,6 +2019,13 @@ def run():
         except Exception as e:
             logger.error(e)
             pass
+        else:
+            folder_to_delete = str(Path(rootdir) / "frames")
+            if os.path.isdir(folder_to_delete):
+                try:
+                    shutil.rmtree(folder_to_delete)
+                except OSError as e:
+                    logger.error(f"Error: {folder_to_delete} : {e.strerror}")
         
         # if is_chart_drawn:
         #     input("Enter to continue")
@@ -2065,7 +2072,7 @@ def run_demo():
         # reset_until_pattern_after_fs(outdir=rootdir)
         # reset_until_fs_after_label(outdir=rootdir)
         # reset_until_label(outdir=rootdir)
-        
+
     except Exception as e:
         logger.error(e)
         pass
